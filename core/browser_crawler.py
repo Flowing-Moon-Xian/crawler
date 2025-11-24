@@ -70,10 +70,41 @@ class BrowserCrawler(BaseCrawler):
         
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=self.config.crawler.headless)
-                context = browser.new_context(
-                    user_agent=self.config.csqaq.user_agent
-                )
+                # 配置浏览器启动选项
+                launch_options = {"headless": self.config.crawler.headless}
+                
+                # 配置代理（如果提供）
+                context_options = {
+                    "user_agent": self.config.csqaq.user_agent
+                }
+                if self.config.crawler.proxy:
+                    # 解析代理 URL
+                    proxy_url = self.config.crawler.proxy
+                    # 移除协议前缀
+                    if proxy_url.startswith("http://"):
+                        proxy_url = proxy_url[7:]
+                    elif proxy_url.startswith("https://"):
+                        proxy_url = proxy_url[8:]
+                    
+                    # 解析用户名密码（如果有）
+                    if "@" in proxy_url:
+                        auth_part, server_part = proxy_url.rsplit("@", 1)
+                        if ":" in auth_part:
+                            username, password = auth_part.split(":", 1)
+                            context_options["proxy"] = {
+                                "server": f"http://{server_part}",
+                                "username": username,
+                                "password": password
+                            }
+                        else:
+                            context_options["proxy"] = {"server": f"http://{server_part}"}
+                    else:
+                        context_options["proxy"] = {"server": f"http://{proxy_url}"}
+                    
+                    self.logger.info(f"使用代理: {self.config.crawler.proxy}")
+                
+                browser = p.chromium.launch(**launch_options)
+                context = browser.new_context(**context_options)
                 page = context.new_page()
                 
                 captured_response = [None]

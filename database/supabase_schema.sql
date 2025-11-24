@@ -7,6 +7,7 @@
 
 -- 稀有度枚举
 CREATE TYPE rarity_type AS ENUM (
+    'normal',        -- 普通级
     'consumer',      -- 消费
     'industrial',    -- 工业
     'mil_spec',      -- 军规
@@ -72,14 +73,14 @@ CREATE TABLE knife_gloves (
     name VARCHAR(255) NOT NULL,                    -- 名称
     item_type VARCHAR(50) NOT NULL,                -- 'knife' 或 'glove'
     rarity rarity_type NOT NULL,                   -- 稀有度
+    wear_condition wear_condition,                 -- 磨损度（CSQAQ 将不同磨损度当作不同商品）
     skin_series VARCHAR(255),                      -- 皮肤系列/Collection
     is_tradable BOOLEAN DEFAULT true,              -- 是否可交易
     min_float DECIMAL(10, 8),                      -- 最小磨损值
     max_float DECIMAL(10, 8),                      -- 最大磨损值
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(name, item_type),
-    UNIQUE(qaq_id)
+    UNIQUE(qaq_id)                                 -- qaq_id 唯一约束
 );
 
 -- 枪皮表
@@ -90,14 +91,14 @@ CREATE TABLE gun_skins (
     name VARCHAR(255) NOT NULL,                    -- 枪皮名称
     weapon_type VARCHAR(100),                      -- 武器类型（如 "AK-47", "M4A4", "AWP" 等）
     rarity rarity_type NOT NULL,                   -- 稀有度
+    wear_condition wear_condition,                 -- 磨损度（CSQAQ 将不同磨损度当作不同商品）
     skin_series VARCHAR(255),                      -- 皮肤系列/Collection
     is_tradable BOOLEAN DEFAULT true,              -- 是否可交易
     min_float DECIMAL(10, 8),                      -- 最小磨损值
     max_float DECIMAL(10, 8),                      -- 最大磨损值
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(name),
-    UNIQUE(qaq_id)
+    UNIQUE(qaq_id)                                 -- qaq_id 唯一约束
 );
 
 -- ============================================
@@ -163,11 +164,11 @@ CREATE TABLE kline_data (
 -- ============================================
 
 -- 市场数据主表（三个市场共有字段）
+-- 注意：wear_condition 已移至 gun_skins 和 knife_gloves 表
 CREATE TABLE market_data (
     id BIGSERIAL PRIMARY KEY,
     item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
     market market_type NOT NULL,                   -- 市场类型
-    wear_condition wear_condition,                 -- 磨损度（枪皮和刀皮手套都有）
     selling_price DECIMAL(12, 2),                  -- 出售价
     buying_price DECIMAL(12, 2),                   -- 求购价
     transaction_price DECIMAL(12, 2),              -- 成交价
@@ -182,7 +183,7 @@ CREATE TABLE market_data (
     popularity_rank INTEGER,                       -- 热度排名
     timestamp TIMESTAMPTZ NOT NULL,                -- 数据采集时间
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(item_statistics_id, market, wear_condition, timestamp)
+    UNIQUE(item_statistics_id, market, timestamp)  -- 唯一约束：同一商品统计、市场、时间戳唯一
 );
 
 -- UUYP 市场独有数据表
@@ -274,6 +275,8 @@ CREATE INDEX idx_knife_gloves_name ON knife_gloves(name);
 CREATE INDEX idx_knife_gloves_qaq_id ON knife_gloves(qaq_id);
 CREATE INDEX idx_knife_gloves_rarity ON knife_gloves(rarity);
 CREATE INDEX idx_knife_gloves_item_type ON knife_gloves(item_type);
+CREATE INDEX idx_knife_gloves_wear_condition ON knife_gloves(wear_condition);
+CREATE INDEX idx_knife_gloves_name_item_type_wear_condition ON knife_gloves(name, item_type, wear_condition);
 CREATE INDEX idx_knife_gloves_skin_series ON knife_gloves(skin_series);
 CREATE INDEX idx_knife_gloves_is_tradable ON knife_gloves(is_tradable);
 
@@ -282,6 +285,8 @@ CREATE INDEX idx_gun_skins_name ON gun_skins(name);
 CREATE INDEX idx_gun_skins_qaq_id ON gun_skins(qaq_id);
 CREATE INDEX idx_gun_skins_rarity ON gun_skins(rarity);
 CREATE INDEX idx_gun_skins_weapon_type ON gun_skins(weapon_type);
+CREATE INDEX idx_gun_skins_wear_condition ON gun_skins(wear_condition);
+CREATE INDEX idx_gun_skins_name_wear_condition ON gun_skins(name, wear_condition);
 CREATE INDEX idx_gun_skins_skin_series ON gun_skins(skin_series);
 CREATE INDEX idx_gun_skins_is_tradable ON gun_skins(is_tradable);
 
@@ -306,7 +311,6 @@ CREATE INDEX idx_kline_data_item_period_timestamp ON kline_data(item_statistics_
 -- 市场数据表索引
 CREATE INDEX idx_market_data_item_statistics_id ON market_data(item_statistics_id);
 CREATE INDEX idx_market_data_market ON market_data(market);
-CREATE INDEX idx_market_data_wear_condition ON market_data(wear_condition);
 CREATE INDEX idx_market_data_timestamp ON market_data(timestamp);
 CREATE INDEX idx_market_data_item_market_timestamp ON market_data(item_statistics_id, market, timestamp);
 CREATE INDEX idx_market_data_liquidity_score ON market_data(liquidity_score);
@@ -391,12 +395,12 @@ LEFT JOIN gun_skins gs ON its.item_type = 'gun_skin' AND its.item_id = gs.id
 LEFT JOIN knife_gloves kg ON its.item_type = 'knife_glove' AND its.item_id = kg.id;
 
 -- 市场数据完整视图（包含所有市场信息）
+-- 注意：wear_condition 已从 market_data 移除，现在存储在 gun_skins 和 knife_gloves 表中
 CREATE VIEW v_market_full_data AS
 SELECT 
     md.id,
     md.item_statistics_id,
     md.market,
-    md.wear_condition,
     md.selling_price,
     md.buying_price,
     md.transaction_price,
@@ -435,13 +439,13 @@ LEFT JOIN buff_data buff ON md.id = buff.market_data_id AND md.market = 'buff';
 -- ============================================
 
 COMMENT ON TABLE boxes IS '箱子表，包含箱子的基本信息、回报率、获取途径和当前价格';
-COMMENT ON TABLE knife_gloves IS '刀皮和手套表，包含 CSQAQ 商品ID、磨损值范围和皮肤系列';
-COMMENT ON TABLE gun_skins IS '枪皮表，包含 CSQAQ 商品ID、武器类型、磨损值范围和皮肤系列';
+COMMENT ON TABLE knife_gloves IS '刀皮和手套表，包含 CSQAQ 商品ID、磨损度、磨损值范围和皮肤系列。注意：CSQAQ 将不同磨损度当作不同商品，因此同一名称和类型的商品可以有多个磨损度记录';
+COMMENT ON TABLE gun_skins IS '枪皮表，包含 CSQAQ 商品ID、武器类型、磨损度、磨损值范围和皮肤系列。注意：CSQAQ 将不同磨损度当作不同商品，因此同一名称的枪皮可以有多个磨损度记录';
 COMMENT ON TABLE box_knife_glove_relations IS '箱子与刀皮/手套的关系表（一对多）';
 COMMENT ON TABLE box_gun_skin_relations IS '箱子与枪皮的关系表（一对多）';
 COMMENT ON TABLE item_statistics IS '商品统计主表，存储存世量、名称、类型、稀有度等信息';
 COMMENT ON TABLE kline_data IS 'K线数据表，存储开盘价、收盘价、最高价、最低价、交易量';
-COMMENT ON TABLE market_data IS '市场数据主表，存储三个市场（buff、uuyp、steam）的共有字段，包含价格趋势和热度数据';
+COMMENT ON TABLE market_data IS '市场数据主表，存储三个市场（buff、uuyp、steam）的共有字段，包含价格趋势和热度数据。注意：wear_condition 字段已移除，磨损度信息现在存储在 gun_skins 和 knife_gloves 表中';
 COMMENT ON TABLE uuyp_data IS 'UUYP 市场独有数据表，包含租赁相关数据';
 COMMENT ON TABLE steam_data IS 'Steam 市场独有数据表，包含挂刀比数据';
 COMMENT ON TABLE buff_data IS 'Buff 市场独有数据表，包含 Steam 参考价格等数据';

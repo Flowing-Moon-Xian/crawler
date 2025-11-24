@@ -53,6 +53,7 @@ class CrawlerConfig:
     save_to_file: bool = True  # 是否保存到文件
     save_to_db: bool = True  # 是否保存到数据库
     batch_size: int = 100  # 批量处理大小
+    proxy: Optional[str] = None  # 代理服务器地址，格式: http://host:port 或 http://user:pass@host:port
 
 
 @dataclass
@@ -86,9 +87,16 @@ class Config:
     @classmethod
     def from_env(cls) -> 'Config':
         """从环境变量创建配置"""
+        # 从环境变量读取代理配置
+        proxy = os.getenv("PROXY") or os.getenv("HTTP_PROXY") or os.getenv("HTTPS_PROXY")
+        
+        crawler_config = CrawlerConfig(
+            proxy=proxy
+        )
+        
         return cls(
             supabase_config=SupabaseConfig.from_env(),
-            crawler_config=CrawlerConfig(),
+            crawler_config=crawler_config,
             csqaq_config=CSQAQConfig()
         )
     

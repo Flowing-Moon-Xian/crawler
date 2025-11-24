@@ -105,7 +105,52 @@ export SUPABASE_URL="your_supabase_project_url"
 export SUPABASE_KEY="your_supabase_anon_key"
 ```
 
-### 3. 运行爬虫
+### 3. 配置代理（可选，用于 IP 白名单场景）
+
+如果 API 接口需要 IP 白名单验证，可以通过代理服务器使用固定 IP 访问。
+
+#### 方式一：环境变量（推荐）
+
+在 `.env` 文件中设置：
+
+```env
+PROXY=http://proxy.example.com:8080
+# 或带认证的代理
+PROXY=http://username:password@proxy.example.com:8080
+```
+
+或者使用命令行：
+
+```bash
+export PROXY="http://proxy.example.com:8080"
+# 或带认证
+export PROXY="http://username:password@proxy.example.com:8080"
+```
+
+#### 方式二：在 config_local.py 中配置
+
+```python
+# 在 config/config_local.py 中
+PROXY = "http://proxy.example.com:8080"
+# 或带认证
+PROXY = "http://username:password@proxy.example.com:8080"
+```
+
+然后在代码中：
+
+```python
+from crawler.config.config import Config, CrawlerConfig
+
+crawler_config = CrawlerConfig(proxy="http://proxy.example.com:8080")
+config = Config(crawler_config=crawler_config)
+```
+
+**注意**：
+- 代理格式：`http://host:port` 或 `http://user:pass@host:port`
+- 代理会同时用于 HTTP 和 HTTPS 请求
+- 如果不需要代理，可以不设置（默认不使用代理）
+
+### 4. 运行爬虫
 
 #### 箱子详情爬虫（推荐）
 
@@ -266,11 +311,16 @@ API 爬虫基类，用于直接调用 API 的场景。
 
 2. **环境变量**：必须配置 `SUPABASE_URL` 和 `SUPABASE_KEY` 才能保存到数据库
 
-3. **数据映射**：每个爬虫需要实现 `transform_data()` 方法，将 API 返回的数据映射到数据库表格式
+3. **IP 白名单问题**：如果 API 接口需要 IP 白名单验证，请配置代理服务器
+   ```bash
+   export PROXY="http://your-proxy-server:port"
+   ```
 
-4. **唯一键**：确保每个爬虫指定正确的 `unique_key`，用于 upsert 操作
+4. **数据映射**：每个爬虫需要实现 `transform_data()` 方法，将 API 返回的数据映射到数据库表格式
 
-5. **错误处理**：爬虫会自动处理错误并记录日志
+5. **唯一键**：确保每个爬虫指定正确的 `unique_key`，用于 upsert 操作
+
+6. **错误处理**：爬虫会自动处理错误并记录日志
 
 ## 架构优势
 

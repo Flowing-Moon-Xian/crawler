@@ -30,7 +30,7 @@ class ContainerDetailCrawler(APICrawler):
             api_url=api_url,
             unique_key="qaq_id",
             headers={
-                "Authorization": f"Bearer {self.token}"
+                "ApiToken": self.token  # API 使用 ApiToken 头，不是 Authorization
             }
         )
     
@@ -47,7 +47,7 @@ class ContainerDetailCrawler(APICrawler):
         try:
             response = self.session.get(
                 self.api_url,
-                params={"qaq_id": qaq_id},
+                params={"id": qaq_id},  # API 使用 id 参数，不是 qaq_id
                 timeout=self.config.crawler.timeout
             )
             response.raise_for_status()
@@ -75,6 +75,10 @@ class ContainerDetailCrawler(APICrawler):
         转换数据格式
         将 API 返回的数据转换为数据库表格式
         
+        规则：
+        - 如果稀有度是"非凡"（exceptional），则是刀/手套，保存到 knife_gloves 表
+        - 如果是枪皮，名字中"|"前面的是武器类型，保存到 gun_skins 表
+        
         Args:
             raw_data: 原始数据列表
             box_qaq_id: 箱子的 qaq_id
@@ -96,29 +100,110 @@ class ContainerDetailCrawler(APICrawler):
                 self.logger.warning(f"跳过缺少必要字段的数据项: {item}")
                 continue
             
+            # 过滤掉箱子本身（名字包含"武器箱"或"收藏品"的项目）
+            if "武器箱" in short_name or "收藏品" in short_name:
+                self.logger.debug(f"跳过箱子本身: {short_name} (qaq_id={qaq_id})")
+                continue
+            
+            # 只保存受限及以上品质，先快速过滤低品质（避免不必要的映射）
+            # 允许的品质：受限、保密、隐秘、违禁、非凡
+            low_quality_keywords = {"普通级", "普通", "消费级", "消费", "工业级", "工业", "军规级", "军规"}
+            if rln in low_quality_keywords:
+                # 低品质直接跳过，不记录日志（因为数量很多）
+                continue
+            
             # 构建 URL
             qaq_url = f"https://csqaq.com/goods/{qaq_id}"
+            rarity = self._map_rarity(rln)  # 映射稀有度
             
-            # 暂时都保存为枪皮（如果后续需要区分，可以根据名称或其他字段判断）
-            # TODO: 根据实际需求添加类型判断逻辑
-            gun_skin_data = {
-                "qaq_id": qaq_id,
-                "qaq_url": qaq_url,
-                "name": short_name,
-                "rarity": self._map_rarity(rln),  # rln 是中文，需要映射
-            }
-            gun_skins.append(gun_skin_data)
-            gun_skin_relations.append({
-                "box_qaq_id": box_qaq_id,
-                "gun_skin_qaq_id": qaq_id
-            })
+            # 如果稀有度映射失败，跳过该项（避免保存失败）
+            if rarity is None:
+                self.logger.warning(f"跳过无法映射稀有度的数据项: {short_name} (rln={rln}, qaq_id={qaq_id})")
+                continue
+            
+            # 再次确认只保存受限及以上品质（restricted, classified, covert, contraband, exceptional）
+            allowed_rarities = {"restricted", "classified", "covert", "contraband", "exceptional"}
+            if rarity not in allowed_rarities:
+                # 理论上不应该到这里（因为前面已经过滤了），但为了安全起见保留检查
+                continue
+            
+            # 判断是否为非凡品质（刀/手套）
+            if rln == "非凡" or rarity == "exceptional":
+                # 判断是刀还是手套
+                item_type = self._determine_knife_or_glove(short_name)
+                
+                knife_glove_data = {
+                    "qaq_id": qaq_id,
+                    "qaq_url": qaq_url,
+                    "name": short_name,
+                    "item_type": item_type,
+                    "rarity": rarity,
+                }
+                knife_gloves.append(knife_glove_data)
+                # 关系数据（用于后续建立关系，但实际关系是在 save_to_database 中通过数据库 ID 建立的）
+                knife_glove_relations.append({
+                    "box_qaq_id": box_qaq_id,
+                    "knife_glove_qaq_id": qaq_id
+                })
+            else:
+                # 枪皮：从名字中提取武器类型（"|"前面的部分）
+                weapon_type = self._extract_weapon_type(short_name)
+                
+                gun_skin_data = {
+                    "qaq_id": qaq_id,
+                    "qaq_url": qaq_url,
+                    "name": short_name,
+                    "weapon_type": weapon_type,
+                    "rarity": rarity,
+                }
+                gun_skins.append(gun_skin_data)
+                gun_skin_relations.append({
+                    "box_qaq_id": box_qaq_id,
+                    "gun_skin_qaq_id": qaq_id
+                })
         
         return {
             "gun_skins": gun_skins,
-            "knife_gloves": knife_gloves,  # 暂时为空，后续如果需要可以添加
+            "knife_gloves": knife_gloves,
             "gun_skin_relations": gun_skin_relations,
-            "knife_glove_relations": knife_glove_relations  # 暂时为空
+            "knife_glove_relations": knife_glove_relations
         }
+    
+    def _determine_knife_or_glove(self, name: str) -> str:
+        """
+        判断是刀还是手套
+        
+        Args:
+            name: 商品名称
+            
+        Returns:
+            'knife' 或 'glove'
+        """
+        name_lower = name.lower()
+        
+        # 检查是否包含手套相关关键词
+        glove_keywords = ["手套", "glove"]
+        for keyword in glove_keywords:
+            if keyword in name_lower:
+                return "glove"
+        
+        # 默认是刀
+        return "knife"
+    
+    def _extract_weapon_type(self, name: str) -> Optional[str]:
+        """
+        从名字中提取武器类型（"|"前面的部分）
+        
+        Args:
+            name: 商品名称，格式如 "AK-47 | 红线"
+            
+        Returns:
+            武器类型，如 "AK-47"，如果没有"|"则返回 None
+        """
+        if "|" in name:
+            weapon_type = name.split("|")[0].strip()
+            return weapon_type if weapon_type else None
+        return None
     
     def _map_rarity(self, rln: Optional[str]) -> Optional[str]:
         """
@@ -136,7 +221,11 @@ class ContainerDetailCrawler(APICrawler):
         
         # API 返回的是中文，直接使用中文映射
         rarity_map = {
+            "普通级": "normal",
+            "普通": "normal",
+            "消费级": "consumer",
             "消费": "consumer",
+            "工业级": "industrial",
             "工业": "industrial",
             "军规级": "mil_spec",
             "军规": "mil_spec",
@@ -146,6 +235,7 @@ class ContainerDetailCrawler(APICrawler):
             "违禁": "contraband",
             "非凡": "exceptional",
             # 也支持英文（以防万一）
+            "normal": "normal",
             "consumer": "consumer",
             "industrial": "industrial",
             "mil_spec": "mil_spec",
@@ -234,6 +324,7 @@ class ContainerDetailCrawler(APICrawler):
         
         # 1. 获取 box_id（通过 qaq_id 查找，且名字必须包含"武器箱"或"收藏品"）
         try:
+            self.logger.info(f"查询箱子信息: qaq_id={box_qaq_id}")
             # 先查询箱子是否存在
             box_result = self.supabase.query_data(
                 table="boxes",
@@ -256,90 +347,93 @@ class ContainerDetailCrawler(APICrawler):
                 return stats
             
             box_id = box["id"]
+            self.logger.info(f"找到箱子: {box_name} (id={box_id})")
         except Exception as e:
             self.logger.error(f"查询箱子失败: {e}")
             stats["failed"] = 1
             return stats
         
-        # 2. 保存枪皮
-        for gun_skin in transformed_data.get("gun_skins", []):
+        # 2. 批量保存枪皮（使用 upsert，避免唯一约束冲突）
+        gun_skins_list = transformed_data.get("gun_skins", [])
+        total_gun_skins = len(gun_skins_list)
+        if total_gun_skins > 0:
+            self.logger.info(f"开始批量保存 {total_gun_skins} 个枪皮...")
             try:
-                # 检查是否已存在
-                existing = self.supabase.query_data(
-                    table="gun_skins",
-                    filters={"qaq_id": gun_skin["qaq_id"]},
-                    limit=1
-                )
+                # 使用 upsert，如果 qaq_id 已存在则更新，不存在则插入
+                result = self.supabase.client.table("gun_skins").upsert(
+                    gun_skins_list,
+                    on_conflict="qaq_id"
+                ).execute()
                 
-                if existing:
-                    gun_skin_id = existing[0]["id"]
+                if result.data:
+                    stats["gun_skins"] = len(result.data)
+                    self.logger.info(f"成功保存 {stats['gun_skins']} 个枪皮（插入或更新）")
+                    
+                    # 构建 qaq_id 到 id 的映射
+                    qaq_id_to_id = {item["qaq_id"]: item["id"] for item in result.data}
+                    
+                    # 批量插入关系（使用 upsert 避免重复）
+                    relations = [
+                        {"box_id": box_id, "gun_skin_id": qaq_id_to_id[gun_skin["qaq_id"]]}
+                        for gun_skin in gun_skins_list
+                        if gun_skin["qaq_id"] in qaq_id_to_id
+                    ]
+                    
+                    if relations:
+                        relation_result = self.supabase.client.table("box_gun_skin_relations").upsert(
+                            relations,
+                            on_conflict="box_id,gun_skin_id"
+                        ).execute()
+                        stats["gun_skin_relations"] = len(relation_result.data) if relation_result.data else 0
+                        self.logger.info(f"成功保存 {stats['gun_skin_relations']} 个枪皮关系")
                 else:
-                    # 插入新枪皮
-                    result = self.supabase.insert_data("gun_skins", gun_skin)
-                    if result:
-                        gun_skin_id = result["id"]
-                        stats["gun_skins"] += 1
-                    else:
-                        stats["failed"] += 1
-                        continue
-                
-                # 建立关系
-                relation = {
-                    "box_id": box_id,
-                    "gun_skin_id": gun_skin_id
-                }
-                existing_relation = self.supabase.query_data(
-                    table="box_gun_skin_relations",
-                    filters={"box_id": box_id, "gun_skin_id": gun_skin_id},
-                    limit=1
-                )
-                if not existing_relation:
-                    self.supabase.insert_data("box_gun_skin_relations", relation)
-                    stats["gun_skin_relations"] += 1
+                    self.logger.warning("枪皮 upsert 未返回数据")
+                    stats["failed"] = total_gun_skins
                     
             except Exception as e:
-                self.logger.error(f"保存枪皮失败: {e}, data={gun_skin}")
-                stats["failed"] += 1
+                self.logger.error(f"批量保存枪皮失败: {e}")
+                stats["failed"] = total_gun_skins
         
-        # 3. 保存刀/手套
-        for knife_glove in transformed_data.get("knife_gloves", []):
+        # 3. 批量保存刀/手套（使用 upsert，避免唯一约束冲突）
+        knife_gloves_list = transformed_data.get("knife_gloves", [])
+        total_knife_gloves = len(knife_gloves_list)
+        if total_knife_gloves > 0:
+            self.logger.info(f"开始批量保存 {total_knife_gloves} 个刀/手套...")
             try:
-                # 检查是否已存在
-                existing = self.supabase.query_data(
-                    table="knife_gloves",
-                    filters={"qaq_id": knife_glove["qaq_id"]},
-                    limit=1
-                )
+                # 使用 upsert，如果 qaq_id 已存在则更新，不存在则插入
+                result = self.supabase.client.table("knife_gloves").upsert(
+                    knife_gloves_list,
+                    on_conflict="qaq_id"
+                ).execute()
                 
-                if existing:
-                    knife_glove_id = existing[0]["id"]
+                if result.data:
+                    stats["knife_gloves"] = len(result.data)
+                    self.logger.info(f"成功保存 {stats['knife_gloves']} 个刀/手套（插入或更新）")
+                    
+                    # 构建 qaq_id 到 id 的映射
+                    qaq_id_to_id = {item["qaq_id"]: item["id"] for item in result.data}
+                    
+                    # 批量插入关系（使用 upsert 避免重复）
+                    relations = [
+                        {"box_id": box_id, "knife_glove_id": qaq_id_to_id[knife_glove["qaq_id"]]}
+                        for knife_glove in knife_gloves_list
+                        if knife_glove["qaq_id"] in qaq_id_to_id
+                    ]
+                    
+                    if relations:
+                        relation_result = self.supabase.client.table("box_knife_glove_relations").upsert(
+                            relations,
+                            on_conflict="box_id,knife_glove_id"
+                        ).execute()
+                        stats["knife_glove_relations"] = len(relation_result.data) if relation_result.data else 0
+                        self.logger.info(f"成功保存 {stats['knife_glove_relations']} 个刀/手套关系")
                 else:
-                    # 插入新刀/手套
-                    result = self.supabase.insert_data("knife_gloves", knife_glove)
-                    if result:
-                        knife_glove_id = result["id"]
-                        stats["knife_gloves"] += 1
-                    else:
-                        stats["failed"] += 1
-                        continue
-                
-                # 建立关系
-                relation = {
-                    "box_id": box_id,
-                    "knife_glove_id": knife_glove_id
-                }
-                existing_relation = self.supabase.query_data(
-                    table="box_knife_glove_relations",
-                    filters={"box_id": box_id, "knife_glove_id": knife_glove_id},
-                    limit=1
-                )
-                if not existing_relation:
-                    self.supabase.insert_data("box_knife_glove_relations", relation)
-                    stats["knife_glove_relations"] += 1
+                    self.logger.warning("刀/手套 upsert 未返回数据")
+                    stats["failed"] = total_knife_gloves
                     
             except Exception as e:
-                self.logger.error(f"保存刀/手套失败: {e}, data={knife_glove}")
-                stats["failed"] += 1
+                self.logger.error(f"批量保存刀/手套失败: {e}")
+                stats["failed"] = total_knife_gloves
         
         return stats
     
@@ -372,9 +466,14 @@ class ContainerDetailCrawler(APICrawler):
                 return result
             
             # 2. 转换数据
+            self.logger.info(f"开始转换数据，原始数据项数: {len(raw_data)}")
             transformed_data = self.transform_data(raw_data, box_qaq_id)
             total_items = len(transformed_data.get("gun_skins", [])) + len(transformed_data.get("knife_gloves", []))
+            gun_skins_count = len(transformed_data.get("gun_skins", []))
+            knife_gloves_count = len(transformed_data.get("knife_gloves", []))
             result["data_count"] = total_items
+            
+            self.logger.info(f"数据转换完成: 枪皮 {gun_skins_count} 个, 刀/手套 {knife_gloves_count} 个, 总计 {total_items} 个")
             
             if total_items == 0:
                 result["error"] = "转换后无有效数据"
@@ -386,9 +485,13 @@ class ContainerDetailCrawler(APICrawler):
             
             # 4. 保存到数据库（如果启用）
             if self.config.crawler.save_to_db and self.supabase:
+                self.logger.info("开始保存数据到数据库...")
                 db_stats = self.save_to_database(transformed_data, box_qaq_id)
                 result["saved_count"] = db_stats["gun_skins"] + db_stats["knife_gloves"]
                 result["db_stats"] = db_stats
+                self.logger.info(f"数据库保存完成: 新增枪皮 {db_stats['gun_skins']} 个, 新增刀/手套 {db_stats['knife_gloves']} 个, "
+                               f"关系 {db_stats['gun_skin_relations'] + db_stats['knife_glove_relations']} 个, "
+                               f"失败 {db_stats['failed']} 个")
             elif self.config.crawler.save_to_db and not self.supabase:
                 self.logger.warning("数据库保存已启用但 Supabase 未初始化")
             

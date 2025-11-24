@@ -38,6 +38,15 @@ class APICrawler(BaseCrawler):
         
         # 初始化 requests session
         self.session = requests.Session()
+        
+        # 配置代理（如果提供）
+        if config.crawler.proxy:
+            self.session.proxies = {
+                "http": config.crawler.proxy,
+                "https": config.crawler.proxy
+            }
+            self.logger.info(f"使用代理: {config.crawler.proxy}")
+        
         default_headers = {
             "User-Agent": config.csqaq.user_agent,
             "Accept": "application/json",
