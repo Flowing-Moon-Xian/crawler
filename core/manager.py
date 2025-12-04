@@ -6,8 +6,8 @@ import logging
 from typing import Dict, List, Optional, Type
 from datetime import datetime
 
-from crawler.config.config import Config
-from crawler.core.base import BaseCrawler
+from crawler.config import Config
+from crawler.base import BaseCrawler
 
 
 class CrawlerManager:

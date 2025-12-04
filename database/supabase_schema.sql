@@ -44,7 +44,8 @@ CREATE TYPE market_type AS ENUM (
 -- K线周期类型枚举
 CREATE TYPE kline_period AS ENUM (
     'hourly',        -- 时K
-    'daily'          -- 日K
+    'daily',         -- 日K
+    'weekly'         -- 周K
 );
 
 
@@ -133,6 +134,8 @@ CREATE TABLE item_statistics (
     item_id BIGINT NOT NULL,                       -- 商品ID（可能是 gun_skin_id 或 knife_glove_id）
     item_type item_type NOT NULL,                  -- 商品类型
     name VARCHAR(255) NOT NULL,                    -- 商品名称
+    csqaq_id BIGINT,                               -- CSQAQ 商品ID（可选，便于直接关联）
+    steamdt_id BIGINT,                             -- SteamDT 商品ID（可选，便于直接关联）
     rarity rarity_type,                            -- 稀有度（枪皮和刀皮手套都有）
     circulation BIGINT,                            -- 存世量
     created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -144,7 +147,6 @@ CREATE TABLE item_statistics (
 -- 5. K线数据表
 -- ============================================
 
--- K线数据表（开盘价、收盘价、最高价、最低价、交易量）
 CREATE TABLE kline_data (
     id BIGSERIAL PRIMARY KEY,
     item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
@@ -155,6 +157,24 @@ CREATE TABLE kline_data (
     high_price DECIMAL(12, 2),                     -- 最高价
     low_price DECIMAL(12, 2),                      -- 最低价
     volume BIGINT,                                 -- 交易量
+    turnover DECIMAL(18, 2),                       -- 成交额
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(item_statistics_id, period, timestamp)
+);
+
+-- 走势表（市场趋势数据：价格、在售数量、求购价、求购数量、存世量、成交量）
+CREATE TABLE trend_data (
+    id BIGSERIAL PRIMARY KEY,
+    item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
+    period kline_period NOT NULL,                  -- 周期（时K、日K、周K）
+    timestamp TIMESTAMPTZ NOT NULL,                -- 时间戳
+    price DECIMAL(12, 2),                          -- 价格（成交价或平均价）
+    items_for_sale INTEGER,                         -- 在售数量
+    buying_price DECIMAL(12, 2),                    -- 求购价
+    buy_orders INTEGER,                             -- 求购数量
+    circulation BIGINT,                            -- 存世量
+    transaction_volume BIGINT,                      -- 成交量
+    turnover DECIMAL(18, 2),                       -- 成交额
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(item_statistics_id, period, timestamp)
 );
@@ -301,12 +321,20 @@ CREATE INDEX idx_item_statistics_item_id ON item_statistics(item_id);
 CREATE INDEX idx_item_statistics_item_type ON item_statistics(item_type);
 CREATE INDEX idx_item_statistics_rarity ON item_statistics(rarity);
 CREATE INDEX idx_item_statistics_name ON item_statistics(name);
+CREATE INDEX idx_item_statistics_csqaq_id ON item_statistics(csqaq_id);
+CREATE INDEX idx_item_statistics_steamdt_id ON item_statistics(steamdt_id);
 
 -- K线数据表索引
 CREATE INDEX idx_kline_data_item_statistics_id ON kline_data(item_statistics_id);
 CREATE INDEX idx_kline_data_period ON kline_data(period);
 CREATE INDEX idx_kline_data_timestamp ON kline_data(timestamp);
 CREATE INDEX idx_kline_data_item_period_timestamp ON kline_data(item_statistics_id, period, timestamp);
+
+-- 走势表索引
+CREATE INDEX idx_trend_data_item_statistics_id ON trend_data(item_statistics_id);
+CREATE INDEX idx_trend_data_period ON trend_data(period);
+CREATE INDEX idx_trend_data_timestamp ON trend_data(timestamp);
+CREATE INDEX idx_trend_data_item_period_timestamp ON trend_data(item_statistics_id, period, timestamp);
 
 -- 市场数据表索引
 CREATE INDEX idx_market_data_item_statistics_id ON market_data(item_statistics_id);
@@ -445,6 +473,7 @@ COMMENT ON TABLE box_knife_glove_relations IS '箱子与刀皮/手套的关系�
 COMMENT ON TABLE box_gun_skin_relations IS '箱子与枪皮的关系表（一对多）';
 COMMENT ON TABLE item_statistics IS '商品统计主表，存储存世量、名称、类型、稀有度等信息';
 COMMENT ON TABLE kline_data IS 'K线数据表，存储开盘价、收盘价、最高价、最低价、交易量';
+COMMENT ON TABLE trend_data IS '走势表，存储商品的市场趋势数据，包括价格、在售数量、求购价、求购数量、存世量、成交量，支持时K、日K、周K三种周期';
 COMMENT ON TABLE market_data IS '市场数据主表，存储三个市场（buff、uuyp、steam）的共有字段，包含价格趋势和热度数据。注意：wear_condition 字段已移除，磨损度信息现在存储在 gun_skins 和 knife_gloves 表中';
 COMMENT ON TABLE uuyp_data IS 'UUYP 市场独有数据表，包含租赁相关数据';
 COMMENT ON TABLE steam_data IS 'Steam 市场独有数据表，包含挂刀比数据';

@@ -52,6 +52,7 @@ class KlinePeriod(str, Enum):
     """K线周期枚举"""
     HOURLY = "hourly"              # 时K
     DAILY = "daily"                # 日K
+    WEEKLY = "weekly"              # 周K
 
 
 class BoxObtainMethod(str, Enum):
@@ -216,6 +217,8 @@ class ItemStatistics:
     item_id: int
     item_type: ItemType
     name: str
+    csqaq_id: Optional[int] = None
+    steamdt_id: Optional[int] = None
     rarity: Optional[RarityType] = None
     circulation: Optional[int] = None
     id: Optional[int] = None
@@ -250,6 +253,7 @@ class KlineData:
     high_price: Optional[Decimal] = None
     low_price: Optional[Decimal] = None
     volume: Optional[int] = None
+    turnover: Optional[Decimal] = None
     id: Optional[int] = None
     created_at: Optional[datetime] = None
 
@@ -264,7 +268,43 @@ class KlineData:
         if isinstance(data.get("period"), Enum):
             data["period"] = data["period"].value
         # 转换 Decimal 为 float
-        for price_field in ["open_price", "close_price", "high_price", "low_price"]:
+        for price_field in ["open_price", "close_price", "high_price", "low_price", "turnover"]:
+            if data.get(price_field) is not None:
+                data[price_field] = float(data[price_field])
+        # 转换 datetime 为 ISO 格式字符串
+        if isinstance(data.get("timestamp"), datetime):
+            data["timestamp"] = data["timestamp"].isoformat()
+        return data
+
+
+@dataclass
+class TrendData:
+    """走势数据模型"""
+    item_statistics_id: int
+    period: KlinePeriod
+    timestamp: datetime
+    price: Optional[Decimal] = None
+    items_for_sale: Optional[int] = None
+    buying_price: Optional[Decimal] = None
+    buy_orders: Optional[int] = None
+    circulation: Optional[int] = None
+    transaction_volume: Optional[int] = None
+    turnover: Optional[Decimal] = None
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("period"), Enum):
+            data["period"] = data["period"].value
+        # 转换 Decimal 为 float
+        for price_field in ["price", "buying_price", "turnover"]:
             if data.get(price_field) is not None:
                 data[price_field] = float(data[price_field])
         # 转换 datetime 为 ISO 格式字符串
@@ -464,5 +504,73 @@ class DataSource:
         # 转换 datetime 为 ISO 格式字符串
         if isinstance(data.get("last_sync_time"), datetime):
             data["last_sync_time"] = data["last_sync_time"].isoformat()
+        return data
+
+
+@dataclass
+class TotalKlineData:
+    """大盘 K 线数据模型（total_kline_data 表）"""
+    period: KlinePeriod
+    timestamp: datetime
+    open_price: Optional[Decimal] = None
+    close_price: Optional[Decimal] = None
+    high_price: Optional[Decimal] = None
+    low_price: Optional[Decimal] = None
+    volume: Optional[int] = None
+    turnover: Optional[Decimal] = None
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("period"), Enum):
+            data["period"] = data["period"].value
+        # 转换 Decimal 为 float
+        for price_field in ["open_price", "close_price", "high_price", "low_price", "turnover"]:
+            if data.get(price_field) is not None:
+                data[price_field] = float(data[price_field])
+        # 转换 datetime 为 ISO 格式字符串
+        if isinstance(data.get("timestamp"), datetime):
+            data["timestamp"] = data["timestamp"].isoformat()
+        return data
+
+
+@dataclass
+class SubKlineData:
+    """子大盘 K 线数据模型（qianzhan_kline_data, agent_kline_data 表）"""
+    period: KlinePeriod
+    timestamp: datetime
+    open_price: Optional[Decimal] = None
+    close_price: Optional[Decimal] = None
+    high_price: Optional[Decimal] = None
+    low_price: Optional[Decimal] = None
+    volume: Optional[int] = None
+    turnover: Optional[Decimal] = None
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("period"), Enum):
+            data["period"] = data["period"].value
+        # 转换 Decimal 为 float
+        for price_field in ["open_price", "close_price", "high_price", "low_price", "turnover"]:
+            if data.get(price_field) is not None:
+                data[price_field] = float(data[price_field])
+        # 转换 datetime 为 ISO 格式字符串
+        if isinstance(data.get("timestamp"), datetime):
+            data["timestamp"] = data["timestamp"].isoformat()
         return data
 

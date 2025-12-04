@@ -5,8 +5,8 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-from crawler.core.browser_crawler import BrowserCrawler
-from crawler.config.config import Config
+from crawler.browser_crawler import BrowserCrawler
+from crawler.config import Config
 
 
 class ContainerCrawler(BrowserCrawler):

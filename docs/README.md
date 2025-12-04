@@ -15,32 +15,19 @@
 ```
 crawler/
 ├── __init__.py              # 模块导出
-├── core/                    # 核心模块
-│   ├── __init__.py
-│   ├── base.py              # 基础爬虫类
-│   ├── api_crawler.py       # API 爬虫基类
-│   ├── browser_crawler.py   # 浏览器爬虫基类
-│   └── manager.py           # 爬虫管理器
-├── config/                  # 配置模块
-│   ├── __init__.py
-│   ├── config.py            # 配置管理
-│   └── config_local.py      # 本地配置（不纳入版本控制）
-├── database/                # 数据库模块
-│   ├── __init__.py
-│   ├── supabase_client.py   # Supabase 客户端
-│   ├── models.py            # 数据模型
-│   ├── supabase_schema.sql  # 数据库架构
-│   └── supabase_rls_policies.sql  # RLS 策略
+├── config.py                # 配置管理
+├── base.py                  # 基础爬虫类
+├── browser_crawler.py       # 浏览器爬虫基类
+├── api_crawler.py           # API 爬虫基类
+├── manager.py               # 爬虫管理器
+├── supabase_client.py       # Supabase 客户端
+├── main.py                  # 主入口
 ├── crawlers/                # 具体爬虫实现
 │   ├── __init__.py
-│   ├── container_crawler.py         # 容器数据爬虫
-│   └── container_detail_crawler.py  # 箱子详情爬虫
-├── examples/                # 示例代码
-│   ├── database_example.py          # 数据库使用示例
-│   └── container_detail_example.py  # 箱子详情爬虫示例
-└── docs/                    # 文档
-    ├── README.md            # 使用文档
-    └── DATABASE_SCHEMA.md   # 数据库架构文档
+│   └── container_crawler.py # 容器数据爬虫
+├── models.py                # 数据模型
+├── ARCHITECTURE.md          # 架构设计文档
+└── README.md                # 本文件
 ```
 
 ## 安装依赖
@@ -72,7 +59,7 @@ SUPABASE_KEY=your_supabase_anon_key
 ### 方式二：代码中直接配置
 
 ```python
-from crawler.database.supabase_client import SupabaseManager
+from crawler.supabase_client import SupabaseManager
 
 supabase = SupabaseManager(
     url="your_supabase_project_url",
@@ -82,107 +69,57 @@ supabase = SupabaseManager(
 
 ## 快速开始
 
-### 1. 安装依赖
-
-```bash
-pip install supabase playwright requests
-playwright install chromium
-```
-
-### 2. 配置 Supabase
-
-在 `config/config_local.py` 中设置：
-
-```python
-SUPABASE_URL = "your_supabase_url"
-SUPABASE_KEY = "your_supabase_key"
-```
-
-或者使用环境变量：
+### 1. 配置环境变量
 
 ```bash
 export SUPABASE_URL="your_supabase_project_url"
 export SUPABASE_KEY="your_supabase_anon_key"
 ```
 
-### 3. 配置代理（可选，用于 IP 白名单场景）
+### 2. 运行爬虫
 
-如果 API 接口需要 IP 白名单验证，可以通过代理服务器使用固定 IP 访问。
-
-#### 方式一：环境变量（推荐）
-
-在 `.env` 文件中设置：
-
-```env
-PROXY=http://proxy.example.com:8080
-# 或带认证的代理
-PROXY=http://username:password@proxy.example.com:8080
-```
-
-或者使用命令行：
-
+#### 运行所有爬虫
 ```bash
-export PROXY="http://proxy.example.com:8080"
-# 或带认证
-export PROXY="http://username:password@proxy.example.com:8080"
+python3 -m crawler.main
 ```
 
-#### 方式二：在 config_local.py 中配置
-
-```python
-# 在 config/config_local.py 中
-PROXY = "http://proxy.example.com:8080"
-# 或带认证
-PROXY = "http://username:password@proxy.example.com:8080"
-```
-
-然后在代码中：
-
-```python
-from crawler.config.config import Config, CrawlerConfig
-
-crawler_config = CrawlerConfig(proxy="http://proxy.example.com:8080")
-config = Config(crawler_config=crawler_config)
-```
-
-**注意**：
-- 代理格式：`http://host:port` 或 `http://user:pass@host:port`
-- 代理会同时用于 HTTP 和 HTTPS 请求
-- 如果不需要代理，可以不设置（默认不使用代理）
-
-### 4. 运行爬虫
-
-#### 箱子详情爬虫（推荐）
-
+#### 运行指定爬虫
 ```bash
-# 批量处理所有符合条件的箱子（名字包含"武器箱"或"收藏品"）
-python3 -m crawler.examples.container_detail_example
-
-# 处理指定箱子
-python3 -m crawler.examples.container_detail_example 1272
+python3 -m crawler.main --crawler container
 ```
 
-#### 容器数据爬虫
+#### 列出所有爬虫
+```bash
+python3 -m crawler.main --list
+```
 
-使用编程方式运行（见下方"编程方式使用"部分）
+#### 查看状态
+```bash
+python3 -m crawler.main --status
+```
 
 ## 使用方法
 
-### 1. 使用命令行运行示例
+### 1. 使用命令行
 
 ```bash
-# 运行箱子详情爬虫（批量处理所有符合条件的箱子）
-python3 -m crawler.examples.container_detail_example
+# 运行所有爬虫
+python3 -m crawler.main
 
-# 运行指定箱子
-python3 -m crawler.examples.container_detail_example 1272
+# 运行指定爬虫
+python3 -m crawler.main --crawler container
+
+# 只保存到文件（不保存到数据库）
+python3 -m crawler.main --no-db
+
+# 只保存到数据库（不保存到文件）
+python3 -m crawler.main --no-file
 ```
 
 ### 2. 编程方式使用
 
 ```python
-from crawler.config.config import Config
-from crawler.core.manager import CrawlerManager
+from crawler import Config, CrawlerManager
 from crawler.crawlers.container_crawler import ContainerCrawler
 
 # 创建配置（从环境变量加载）
@@ -204,8 +141,8 @@ print(result)
 #### 浏览器爬虫示例
 
 ```python
-from crawler.core.browser_crawler import BrowserCrawler
-from crawler.config.config import Config
+from crawler.browser_crawler import BrowserCrawler
+from crawler.config import Config
 
 class MyBrowserCrawler(BrowserCrawler):
     def __init__(self, config: Config, name: str = "my_crawler"):
@@ -232,8 +169,8 @@ class MyBrowserCrawler(BrowserCrawler):
 #### API 爬虫示例
 
 ```python
-from crawler.core.api_crawler import APICrawler
-from crawler.config.config import Config
+from crawler.api_crawler import APICrawler
+from crawler.config import Config
 
 class MyAPICrawler(APICrawler):
     def __init__(self, config: Config, name: str = "my_api_crawler"):
@@ -260,9 +197,7 @@ class MyAPICrawler(APICrawler):
 
 ## 详细文档
 
-更多详细信息请参考：
-- `PROJECT_STRUCTURE.md` - 项目结构说明
-- `DATABASE_SCHEMA.md` - 数据库架构文档
+更多详细信息请参考 [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ## 核心组件
 
@@ -311,16 +246,11 @@ API 爬虫基类，用于直接调用 API 的场景。
 
 2. **环境变量**：必须配置 `SUPABASE_URL` 和 `SUPABASE_KEY` 才能保存到数据库
 
-3. **IP 白名单问题**：如果 API 接口需要 IP 白名单验证，请配置代理服务器
-   ```bash
-   export PROXY="http://your-proxy-server:port"
-   ```
+3. **数据映射**：每个爬虫需要实现 `transform_data()` 方法，将 API 返回的数据映射到数据库表格式
 
-4. **数据映射**：每个爬虫需要实现 `transform_data()` 方法，将 API 返回的数据映射到数据库表格式
+4. **唯一键**：确保每个爬虫指定正确的 `unique_key`，用于 upsert 操作
 
-5. **唯一键**：确保每个爬虫指定正确的 `unique_key`，用于 upsert 操作
-
-6. **错误处理**：爬虫会自动处理错误并记录日志
+5. **错误处理**：爬虫会自动处理错误并记录日志
 
 ## 架构优势
 
