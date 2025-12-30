@@ -399,8 +399,8 @@ def main():
         "--table",
         type=str,
         default="qianzhan_kline_data",
-        choices=["qianzhan_kline_data", "agent_kline_data"],
-        help="目标表名，默认为 'qianzhan_kline_data'，可选: 'agent_kline_data'"
+        choices=["qianzhan_kline_data", "agent_kline_data", "baizhan_kline_data"],
+        help="目标表名，默认为 'qianzhan_kline_data'，可选: 'qianzhan_kline_data', 'agent_kline_data', 'baizhan_kline_data'"
     )
     
     args = parser.parse_args()

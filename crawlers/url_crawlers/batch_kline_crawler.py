@@ -20,9 +20,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from crawler.config.config import Config
-from crawler.crawlers.kline_crawler import KlineCrawler
-from crawler.crawlers.sub_kline_crawler import SubKlineCrawler
-from crawler.crawlers.item_kline_crawler import ItemKlineCrawler
+from crawler.crawlers.url_crawlers.kline_crawler import KlineCrawler
+from crawler.crawlers.url_crawlers.sub_kline_crawler import SubKlineCrawler
+from crawler.crawlers.url_crawlers.item_kline_crawler import ItemKlineCrawler
 
 
 class BatchKlineCrawler:
@@ -367,8 +367,8 @@ def main():
         "--table",
         type=str,
         default="qianzhan_kline_data",
-        choices=["qianzhan_kline_data", "agent_kline_data"],
-        help="目标表名（仅用于 sub 类型），默认为 'qianzhan_kline_data'",
+        choices=["qianzhan_kline_data", "agent_kline_data", "baizhan_kline_data"],
+        help="目标表名（仅用于 sub 类型），默认为 'qianzhan_kline_data'，可选: 'qianzhan_kline_data', 'agent_kline_data', 'baizhan_kline_data'",
     )
 
     # 其他参数

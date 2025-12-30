@@ -2,7 +2,7 @@
 SteamDT API 爬虫使用示例
 演示如何访问 API 并保存 JSON 数据
 """
-from crawler.crawlers.steamdt_api_crawler import SteamDTAPICrawler
+from crawler.crawlers.json_savers.steamdt_api_crawler import SteamDTAPICrawler
 
 
 def example_fetch_all():

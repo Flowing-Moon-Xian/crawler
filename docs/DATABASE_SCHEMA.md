@@ -111,6 +111,24 @@
 
 **唯一约束**：`(box_id, gun_skin_id)`
 
+#### `item_statistics_market_index_relations` - 商品-大盘关系表
+表示商品与大盘的多对多关系（一个商品可以对应多个大盘）。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | BIGSERIAL | 主键 |
+| item_statistics_id | BIGINT | 商品统计ID（外键，关联 item_statistics） |
+| market_index_type | market_index_type | 大盘类型（枚举：total/qianzhan/agent） |
+| created_at | TIMESTAMPTZ | 创建时间 |
+
+**唯一约束**：`(item_statistics_id, market_index_type)`
+
+**索引**：
+- `idx_item_statistics_market_index_item_statistics_id` - 商品统计ID
+- `idx_item_statistics_market_index_type` - 大盘类型
+
+**说明**：此表用于将商品关联到对应的大盘。一个商品可以同时属于多个大盘（如同时属于大盘和千百战大盘）。
+
 ### 3. 统计表
 
 #### `item_statistics` - 商品统计主表
@@ -422,6 +440,11 @@
 - `hourly` - 时K
 - `daily` - 日K
 - `weekly` - 周K
+
+### `market_index_type` - 大盘类型
+- `total` - 大盘
+- `qianzhan` - 千百战大盘
+- `agent` - 探员大盘
 
 ## 视图
 

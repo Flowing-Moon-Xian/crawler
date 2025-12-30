@@ -15,17 +15,21 @@ from crawler.config.config import Config
 class SteamDTAPICrawler:
     """SteamDT API 爬虫"""
     
-    def __init__(self, config: Optional[Config] = None, output_dir: str = "data"):
+    def __init__(self, config: Optional[Config] = None, output_dir: str = "data", api_token: Optional[str] = None):
         """
         初始化爬虫
         
         Args:
             config: 配置对象，如果为 None 则从环境变量加载
             output_dir: 输出目录，默认为 "data"
+            api_token: SteamDT API Token，如果为 None 则从环境变量 STEAMDT_API_TOKEN 加载
         """
         self.config = config or Config.from_env()
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 获取 API token
+        self.api_token = api_token or os.getenv("STEAMDT_API_TOKEN", "e2b0c8d38975485fa98146cde6bfd580")
         
         # 初始化 requests session
         self.session = requests.Session()
@@ -43,11 +47,18 @@ class SteamDTAPICrawler:
             "User-Agent": self.config.csqaq.user_agent,
             "Accept": "application/json",
             "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Content-Type": "application/json",
         })
+        
+        # 设置 Authorization header（如果提供了 token）
+        if self.api_token:
+            self.session.headers.update({
+                "Authorization": f"Bearer {self.api_token}"
+            })
     
     def fetch_api(self, url: str) -> Optional[Dict[str, Any]]:
         """
-        从 API 获取数据
+        从 API 获取数据（GET 请求）
         
         Args:
             url: API URL
@@ -77,6 +88,69 @@ class SteamDTAPICrawler:
             print(f"获取数据失败: {e}")
             return None
     
+    def post_api(self, url: str, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        向 API 发送 POST 请求
+        
+        Args:
+            url: API URL
+            data: 要发送的 JSON 数据
+            
+        Returns:
+            JSON 响应数据字典，如果失败返回 None
+        """
+        try:
+            print(f"正在发送 POST 请求到: {url}")
+            print(f"请求数据: {json.dumps(data, ensure_ascii=False, indent=2)}")
+            response = self.session.post(
+                url,
+                json=data,
+                timeout=self.config.crawler.timeout
+            )
+            response.raise_for_status()
+            
+            result = response.json()
+            print(f"成功获取数据，响应大小: {len(response.content)} 字节")
+            return result
+            
+        except requests.RequestException as e:
+            print(f"API 请求失败: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    print(f"错误详情: {json.dumps(error_detail, ensure_ascii=False, indent=2)}")
+                except:
+                    print(f"响应内容: {e.response.text}")
+            return None
+        except json.JSONDecodeError as e:
+            print(f"JSON 解析失败: {e}")
+            return None
+        except Exception as e:
+            print(f"获取数据失败: {e}")
+            return None
+    
+    def fetch_wear(self, inspect_url: str, notify_url: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """
+        获取磨损信息（调用 wear API）
+        
+        Args:
+            inspect_url: Steam 检查链接（steam://rungame/...）
+            notify_url: 回调通知 URL（可选）
+            
+        Returns:
+            JSON 响应数据字典，如果失败返回 None
+        """
+        url = "https://open.steamdt.com/open/cs2/v1/wear"
+        
+        data = {
+            "inspectUrl": inspect_url
+        }
+        
+        if notify_url:
+            data["notifyUrl"] = notify_url
+        
+        return self.post_api(url, data)
+    
     def save_json(self, data: Dict[str, Any], filename: str) -> str:
         """
         保存 JSON 数据到文件
@@ -98,7 +172,7 @@ class SteamDTAPICrawler:
     
     def fetch_and_save(self, url: str, filename: Optional[str] = None) -> Optional[str]:
         """
-        获取数据并保存到文件（一步完成）
+        获取数据并保存到文件（一步完成，GET 请求）
         
         Args:
             url: API URL
@@ -120,6 +194,31 @@ class SteamDTAPICrawler:
             base_name = "_".join(url_parts).replace(".", "_")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{base_name}_{timestamp}.json"
+        
+        # 保存数据
+        return self.save_json(data, filename)
+    
+    def fetch_wear_and_save(self, inspect_url: str, notify_url: Optional[str] = None, filename: Optional[str] = None) -> Optional[str]:
+        """
+        获取磨损信息并保存到文件（一步完成）
+        
+        Args:
+            inspect_url: Steam 检查链接
+            notify_url: 回调通知 URL（可选）
+            filename: 文件名，如果为 None 则自动生成
+            
+        Returns:
+            保存的文件路径，如果失败返回 None
+        """
+        # 获取数据
+        data = self.fetch_wear(inspect_url, notify_url)
+        if not data:
+            return None
+        
+        # 生成文件名
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"wear_{timestamp}.json"
         
         # 保存数据
         return self.save_json(data, filename)
@@ -176,21 +275,43 @@ def main():
     parser.add_argument(
         "--url",
         type=str,
-        help="指定要访问的 URL（如果不指定，则访问所有配置的端点）"
+        help="指定要访问的 URL（GET 请求，如果不指定，则访问所有配置的端点）"
     )
     parser.add_argument(
         "--filename",
         type=str,
-        help="指定保存的文件名（仅在使用 --url 时有效）"
+        help="指定保存的文件名（仅在使用 --url 或 --inspect-url 时有效）"
+    )
+    parser.add_argument(
+        "--inspect-url",
+        type=str,
+        help="Steam 检查链接（用于调用 wear API，例如: steam://rungame/730/...）"
+    )
+    parser.add_argument(
+        "--notify-url",
+        type=str,
+        help="回调通知 URL（可选，仅在使用 --inspect-url 时有效）"
+    )
+    parser.add_argument(
+        "--api-token",
+        type=str,
+        help="SteamDT API Token（如果不指定，则使用默认值或环境变量 STEAMDT_API_TOKEN）"
     )
     
     args = parser.parse_args()
     
     # 创建爬虫
-    crawler = SteamDTAPICrawler(output_dir=args.output_dir)
+    crawler = SteamDTAPICrawler(output_dir=args.output_dir, api_token=args.api_token)
     
-    if args.url:
-        # 访问指定的 URL
+    if args.inspect_url:
+        # 调用 wear API
+        filepath = crawler.fetch_wear_and_save(args.inspect_url, args.notify_url, args.filename)
+        if filepath:
+            print(f"\n成功！数据已保存到: {filepath}")
+        else:
+            print("\n失败！无法获取或保存数据")
+    elif args.url:
+        # 访问指定的 URL（GET 请求）
         filepath = crawler.fetch_and_save(args.url, args.filename)
         if filepath:
             print(f"\n成功！数据已保存到: {filepath}")

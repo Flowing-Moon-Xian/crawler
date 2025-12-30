@@ -39,6 +39,8 @@ class ItemType(str, Enum):
     BOX = "box"                    # 箱子
     GUN_SKIN = "gun_skin"          # 枪皮
     KNIFE_GLOVE = "knife_glove"    # 刀皮和手套
+    AGENT = "agent"                # 探员
+    STICKER = "sticker"            # 印花
 
 
 class MarketType(str, Enum):
@@ -55,11 +57,28 @@ class KlinePeriod(str, Enum):
     WEEKLY = "weekly"              # 周K
 
 
+class MarketIndexType(str, Enum):
+    """大盘类型枚举"""
+    TOTAL = "total"                # 大盘
+    QIANZHAN = "qianzhan"          # 千百战大盘
+    AGENT = "agent"                # 探员大盘
+    BAIZHAN = "baizhan"            # 百战大盘
+    STICKER = "sticker"            # 印花大盘
+
+
 class BoxObtainMethod(str, Enum):
     """箱子获取途径枚举"""
     RARE = "rare"                  # 稀有
     REGULAR = "regular"            # 常规
     DISCONTINUED = "discontinued"  # 绝版
+
+
+class TradeType(str, Enum):
+    """交易类型枚举"""
+    BUY = "buy"                    # 买入
+    SELL = "sell"                  # 卖出
+    OPEN = "open"                  # 开仓
+    CLOSE = "close"                # 平仓
 
 
 # ============================================
@@ -208,6 +227,27 @@ class BoxGunSkinRelation:
             data.pop("id", None)
         if data.get("created_at") is None:
             data.pop("created_at", None)
+        return data
+
+
+@dataclass
+class ItemStatisticsMarketIndexRelation:
+    """商品-大盘关系模型"""
+    item_statistics_id: int
+    market_index_type: MarketIndexType
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("market_index_type"), Enum):
+            data["market_index_type"] = data["market_index_type"].value
         return data
 
 
@@ -543,7 +583,7 @@ class TotalKlineData:
 
 @dataclass
 class SubKlineData:
-    """子大盘 K 线数据模型（qianzhan_kline_data, agent_kline_data 表）"""
+    """子大盘 K 线数据模型（qianzhan_kline_data, agent_kline_data, baizhan_kline_data, sticker_kline_data 表）"""
     period: KlinePeriod
     timestamp: datetime
     open_price: Optional[Decimal] = None
@@ -572,5 +612,81 @@ class SubKlineData:
         # 转换 datetime 为 ISO 格式字符串
         if isinstance(data.get("timestamp"), datetime):
             data["timestamp"] = data["timestamp"].isoformat()
+        return data
+
+
+@dataclass
+class Position:
+    """持仓模型（positions 表）"""
+    item_statistics_id: int
+    market_index: MarketIndexType
+    item_name: str
+    quantity: int
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        if data.get("updated_at") is None:
+            data.pop("updated_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("market_index"), Enum):
+            data["market_index"] = data["market_index"].value
+        return data
+
+
+@dataclass
+class Trade:
+    """交易明细模型（trades 表）"""
+    item_statistics_id: int
+    market_index: MarketIndexType
+    item_name: str
+    trade_type: TradeType
+    entry_price: Decimal
+    entry_time: datetime
+    quantity: int
+    entry_amount: Decimal
+    exit_price: Optional[Decimal] = None
+    exit_time: Optional[datetime] = None
+    max_price: Optional[Decimal] = None
+    stop_loss: Optional[Decimal] = None
+    take_profit: Optional[Decimal] = None
+    exit_amount: Optional[Decimal] = None
+    commission: Decimal = Decimal("0")
+    pnl: Optional[Decimal] = None
+    pnl_percent: Optional[Decimal] = None
+    holding_period: Optional[str] = None  # INTERVAL 类型在 Python 中通常用字符串表示
+    signal_reason: Optional[str] = None
+    id: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+    def to_dict(self) -> dict:
+        """转换为字典，用于数据库插入"""
+        data = asdict(self)
+        if data.get("id") is None:
+            data.pop("id", None)
+        if data.get("created_at") is None:
+            data.pop("created_at", None)
+        # 转换枚举为字符串
+        if isinstance(data.get("market_index"), Enum):
+            data["market_index"] = data["market_index"].value
+        if isinstance(data.get("trade_type"), Enum):
+            data["trade_type"] = data["trade_type"].value
+        # 转换 Decimal 为 float
+        for price_field in ["entry_price", "exit_price", "max_price", "stop_loss", "take_profit",
+                           "entry_amount", "exit_amount", "commission", "pnl", "pnl_percent"]:
+            if data.get(price_field) is not None:
+                data[price_field] = float(data[price_field])
+        # 转换 datetime 为 ISO 格式字符串
+        if isinstance(data.get("entry_time"), datetime):
+            data["entry_time"] = data["entry_time"].isoformat()
+        if isinstance(data.get("exit_time"), datetime):
+            data["exit_time"] = data["exit_time"].isoformat()
         return data
 

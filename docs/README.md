@@ -120,7 +120,7 @@ python3 -m crawler.main --no-file
 
 ```python
 from crawler import Config, CrawlerManager
-from crawler.crawlers.container_crawler import ContainerCrawler
+from crawler.crawlers.url_crawlers.container_crawler import ContainerCrawler
 
 # 创建配置（从环境变量加载）
 config = Config.from_env()
@@ -262,3 +262,12 @@ API 爬虫基类，用于直接调用 API 的场景。
 - ✅ 错误处理：统一的错误处理和日志记录
 
 
+python3 -m crawler.crawlers.item_trend_crawler \
+  --item-id 295893123 \
+  --type-day 1 \
+  --date-type 3
+
+python3 -m crawler.crawlers.item_kline_crawler \
+  --kline-type 2 \
+  --type-val 24721 \
+  --max-time 1764814953

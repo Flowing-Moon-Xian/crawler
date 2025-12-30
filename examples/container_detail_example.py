@@ -4,7 +4,7 @@
 import sys
 import time
 from crawler.config.config import Config
-from crawler.crawlers.container_detail_crawler import ContainerDetailCrawler
+from crawler.crawlers.url_crawlers.container_detail_crawler import ContainerDetailCrawler
 
 
 def main():

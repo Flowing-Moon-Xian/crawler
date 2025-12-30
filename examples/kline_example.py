@@ -2,7 +2,7 @@
 K线数据爬虫使用示例
 演示如何从 API 获取 K 线数据并存储到 Supabase
 """
-from crawler.crawlers.kline_crawler import KlineCrawler
+from crawler.crawlers.url_crawlers.kline_crawler import KlineCrawler
 from crawler.config.config import Config
 
 

@@ -2,7 +2,7 @@
 子大盘 K 线数据爬虫使用示例
 演示如何从 API 获取子大盘 K 线数据并存储到 Supabase
 """
-from crawler.crawlers.sub_kline_crawler import SubKlineCrawler
+from crawler.crawlers.url_crawlers.sub_kline_crawler import SubKlineCrawler
 from crawler.config.config import Config
 
 

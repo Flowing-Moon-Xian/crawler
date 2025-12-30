@@ -31,7 +31,9 @@ CREATE TYPE wear_condition AS ENUM (
 CREATE TYPE item_type AS ENUM (
     'box',           -- 箱子
     'gun_skin',      -- 枪皮
-    'knife_glove'    -- 刀皮和手套
+    'knife_glove',   -- 刀皮和手套
+    'agent',         -- 探员
+    'sticker'        -- 印花
 );
 
 -- 市场类型枚举
@@ -46,6 +48,15 @@ CREATE TYPE kline_period AS ENUM (
     'hourly',        -- 时K
     'daily',         -- 日K
     'weekly'         -- 周K
+);
+
+-- 大盘类型枚举
+CREATE TYPE market_index_type AS ENUM (
+    'total',         -- 大盘
+    'qianzhan',      -- 千百战大盘
+    'agent',         -- 探员大盘
+    'baizhan',       -- 百战大盘
+    'sticker'        -- 印花大盘
 );
 
 
@@ -122,6 +133,15 @@ CREATE TABLE box_gun_skin_relations (
     gun_skin_id BIGINT NOT NULL REFERENCES gun_skins(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(box_id, gun_skin_id)
+);
+
+-- 商品-大盘关系表（多对多：一个商品可以对应多个大盘）
+CREATE TABLE item_statistics_market_index_relations (
+    id BIGSERIAL PRIMARY KEY,
+    item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
+    market_index_type market_index_type NOT NULL,    -- 大盘类型（total/qianzhan/agent/baizhan/sticker）
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(item_statistics_id, market_index_type)
 );
 
 -- ============================================
@@ -315,6 +335,8 @@ CREATE INDEX idx_box_knife_glove_box_id ON box_knife_glove_relations(box_id);
 CREATE INDEX idx_box_knife_glove_knife_glove_id ON box_knife_glove_relations(knife_glove_id);
 CREATE INDEX idx_box_gun_skin_box_id ON box_gun_skin_relations(box_id);
 CREATE INDEX idx_box_gun_skin_gun_skin_id ON box_gun_skin_relations(gun_skin_id);
+CREATE INDEX idx_item_statistics_market_index_item_statistics_id ON item_statistics_market_index_relations(item_statistics_id);
+CREATE INDEX idx_item_statistics_market_index_type ON item_statistics_market_index_relations(market_index_type);
 
 -- 商品统计表索引
 CREATE INDEX idx_item_statistics_item_id ON item_statistics(item_id);
@@ -471,6 +493,7 @@ COMMENT ON TABLE knife_gloves IS '刀皮和手套表，包含 CSQAQ 商品ID、�
 COMMENT ON TABLE gun_skins IS '枪皮表，包含 CSQAQ 商品ID、武器类型、磨损度、磨损值范围和皮肤系列。注意：CSQAQ 将不同磨损度当作不同商品，因此同一名称的枪皮可以有多个磨损度记录';
 COMMENT ON TABLE box_knife_glove_relations IS '箱子与刀皮/手套的关系表（一对多）';
 COMMENT ON TABLE box_gun_skin_relations IS '箱子与枪皮的关系表（一对多）';
+COMMENT ON TABLE item_statistics_market_index_relations IS '商品与大盘的关系表（多对多），一个商品可以对应多个大盘（total/qianzhan/agent/baizhan/sticker）';
 COMMENT ON TABLE item_statistics IS '商品统计主表，存储存世量、名称、类型、稀有度等信息';
 COMMENT ON TABLE kline_data IS 'K线数据表，存储开盘价、收盘价、最高价、最低价、交易量';
 COMMENT ON TABLE trend_data IS '走势表，存储商品的市场趋势数据，包括价格、在售数量、求购价、求购数量、存世量、成交量，支持时K、日K、周K三种周期';
@@ -480,4 +503,121 @@ COMMENT ON TABLE steam_data IS 'Steam 市场独有数据表，包含挂刀比数
 COMMENT ON TABLE buff_data IS 'Buff 市场独有数据表，包含 Steam 参考价格等数据';
 COMMENT ON TABLE price_snapshots IS '价格历史快照表，用于详细的价格历史分析';
 COMMENT ON TABLE data_sources IS '数据源追踪表，记录各数据源的同步状态和最后同步时间';
+
+-- ============================================
+-- 13. 持仓与交易明细表（带板块字段）
+-- ============================================
+
+-- 持仓表（所有板块共用，通过 market_index_type 区分）
+-- 仅统计当前持仓信息
+CREATE TABLE positions (
+    id BIGSERIAL PRIMARY KEY,
+    item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
+    market_index market_index_type NOT NULL,           -- 板块：total / qianzhan / agent / baizhan / sticker
+    item_name VARCHAR(255) NOT NULL,                  -- 商品名称（冗余字段，便于查询）
+    quantity INTEGER NOT NULL,                        -- 持仓数量
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(item_statistics_id, market_index)          -- 同一商品在同一板块仅允许一条持仓记录
+);
+
+-- 交易类型枚举（买入/卖出/开仓/平仓）
+CREATE TYPE trade_type AS ENUM (
+    'buy',      -- 买入
+    'sell',     -- 卖出
+    'open',     -- 开仓
+    'close'     -- 平仓
+);
+
+-- 交易明细表（所有板块共用，通过 market_index_type 区分）
+-- 记录完整的交易信息，包括买入和卖出
+CREATE TABLE trades (
+    id BIGSERIAL PRIMARY KEY,
+    item_statistics_id BIGINT NOT NULL REFERENCES item_statistics(id) ON DELETE CASCADE,
+    market_index market_index_type NOT NULL,          -- 板块：total / qianzhan / agent / baizhan
+    item_name VARCHAR(255) NOT NULL,                  -- 商品名称（冗余字段，便于查询）
+    trade_type trade_type NOT NULL,                   -- 交易类型
+    entry_price DECIMAL(12, 2) NOT NULL,              -- 买入价格
+    entry_time TIMESTAMPTZ NOT NULL,                  -- 买入时间
+    exit_price DECIMAL(12, 2),                       -- 卖出价格（买入时为空）
+    exit_time TIMESTAMPTZ,                            -- 卖出时间（买入时为空）
+    quantity INTEGER NOT NULL,                        -- 交易数量
+    max_price DECIMAL(12, 2),                        -- 持仓期间最高价
+    stop_loss DECIMAL(12, 2),                         -- 止损价
+    take_profit DECIMAL(12, 2),                       -- 止盈价
+    entry_amount DECIMAL(18, 2) NOT NULL,             -- 买入金额（含手续费）
+    exit_amount DECIMAL(18, 2),                      -- 卖出金额（含手续费，卖出时计算）
+    commission DECIMAL(18, 2) NOT NULL DEFAULT 0,    -- 手续费总额
+    pnl DECIMAL(18, 2),                               -- 盈亏金额（卖出时计算）
+    pnl_percent DECIMAL(10, 4),                       -- 盈亏百分比（卖出时计算）
+    holding_period INTERVAL,                          -- 持有期（卖出时计算）
+    signal_reason TEXT,                               -- 交易信号原因
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================
+-- 14. 持仓表和交易明细表索引
+-- ============================================
+
+-- 持仓表索引
+CREATE INDEX idx_positions_item_market ON positions(item_statistics_id, market_index);
+CREATE INDEX idx_positions_market ON positions(market_index);
+CREATE INDEX idx_positions_item_name ON positions(item_name);
+
+-- 交易明细表索引
+CREATE INDEX idx_trades_item_market ON trades(item_statistics_id, market_index);
+CREATE INDEX idx_trades_market ON trades(market_index);
+CREATE INDEX idx_trades_trade_type ON trades(trade_type);
+CREATE INDEX idx_trades_entry_time ON trades(entry_time);
+CREATE INDEX idx_trades_exit_time ON trades(exit_time);
+CREATE INDEX idx_trades_item_name ON trades(item_name);
+CREATE INDEX idx_trades_pnl ON trades(pnl);
+CREATE INDEX idx_trades_entry_exit_time ON trades(entry_time, exit_time);
+
+-- ============================================
+-- 15. 持仓表更新时间触发器
+-- ============================================
+
+-- 为持仓表添加更新时间触发器
+CREATE TRIGGER update_positions_updated_at BEFORE UPDATE ON positions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================
+-- 16. 持仓表和交易明细表注释
+-- ============================================
+
+COMMENT ON TABLE positions IS '持仓表：记录各板块（market_index_type）下的当前持仓信息，仅统计持仓状态';
+COMMENT ON TABLE trades IS '交易明细表：记录各板块（market_index_type）下的完整交易信息，包含买入价格、买入时间、持仓期间最高价、止损价、止盈价等';
+COMMENT ON TYPE trade_type IS '交易类型枚举：buy(买入)、sell(卖出)、open(开仓)、close(平仓)';
+
+-- ============================================
+-- 17. 印花大盘表（Sticker）
+-- ============================================
+
+-- 注意：如果枚举类型已经存在，需要使用以下语句添加新值：
+-- ALTER TYPE market_index_type ADD VALUE 'sticker';
+-- 如果是从头创建，枚举值已在 CREATE TYPE 中定义
+
+-- 印花大盘 K 线表
+CREATE TABLE sticker_kline_data (
+    id BIGSERIAL PRIMARY KEY,
+    period kline_period NOT NULL,          -- K 线周期（hourly / daily / weekly）
+    timestamp TIMESTAMPTZ NOT NULL,        -- 时间戳
+    open_price DECIMAL(12, 2),             -- 开盘价
+    close_price DECIMAL(12, 2),            -- 收盘价
+    high_price DECIMAL(12, 2),             -- 最高价
+    low_price DECIMAL(12, 2),              -- 最低价
+    volume BIGINT,                         -- 成交量
+    turnover DECIMAL(18, 2),               -- 成交额
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(period, timestamp)              -- 同一周期+时间只允许一条 K 线
+);
+
+-- 印花大盘 K 线表索引
+CREATE INDEX idx_sticker_kline_period ON sticker_kline_data(period);
+CREATE INDEX idx_sticker_kline_timestamp ON sticker_kline_data(timestamp);
+CREATE INDEX idx_sticker_kline_period_timestamp ON sticker_kline_data(period, timestamp);
+
+-- 注释
+COMMENT ON TABLE sticker_kline_data IS '印花大盘 K 线数据表，存储印花大盘的开盘价、收盘价、最高价、最低价、交易量、成交额';
 

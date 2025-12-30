@@ -1,30 +1,45 @@
 """
 Supabase 客户端配置和工具函数
 """
+
 import os
 from typing import Optional, Dict, Any, List
+
 from supabase import create_client, Client
+
+from crawler.config.config import SupabaseConfig
 
 
 class SupabaseManager:
     """Supabase 数据库管理器"""
-    
+
     def __init__(self, url: Optional[str] = None, key: Optional[str] = None):
         """
         初始化 Supabase 客户端
-        
+
         Args:
-            url: Supabase 项目 URL，如果为 None 则从环境变量获取
-            key: Supabase API Key，如果为 None 则从环境变量获取
+            url: Supabase 项目 URL，如果为 None 则从配置/环境变量获取
+            key: Supabase API Key，如果为 None 则从配置/环境变量获取
         """
-        self.url = url or os.getenv("SUPABASE_URL")
-        self.key = key or os.getenv("SUPABASE_KEY")
-        
+
+        # 如果未显式传入，则尝试从 crawler 的配置模块中加载
+        if url is None or key is None:
+            cfg = SupabaseConfig.from_env()
+        else:
+            cfg = None
+
+        # 优先级：显式参数 > config_local / 环境变量 > 直接读取环境变量
+        self.url = url or (cfg.url if cfg else None) or os.getenv("SUPABASE_URL")
+        self.key = key or (cfg.key if cfg else None) or os.getenv("SUPABASE_KEY")
+
         if not self.url or not self.key:
             raise ValueError(
-                "Supabase URL 和 Key 必须提供，可以通过参数或环境变量 SUPABASE_URL 和 SUPABASE_KEY 设置"
+                "Supabase URL 和 Key 必须提供，可以通过：\n"
+                "- crawler/config/config_local.py 中的 SUPABASE_URL/SUPABASE_KEY，或\n"
+                "- 环境变量 SUPABASE_URL / SUPABASE_KEY，或\n"
+                "- 显式传入 url/key 参数 之一进行配置。"
             )
-        
+
         self.client: Client = create_client(self.url, self.key)
     
     def insert_data(self, table: str, data: Dict[str, Any]) -> Dict[str, Any]:

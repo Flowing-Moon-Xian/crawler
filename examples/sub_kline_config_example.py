@@ -2,7 +2,7 @@
 子大盘 K 线数据爬虫配置示例
 展示如何通过更换 typeVal 和表名来存储不同子大盘的数据
 """
-from crawler.crawlers.sub_kline_crawler import SubKlineCrawler
+from crawler.crawlers.url_crawlers.sub_kline_crawler import SubKlineCrawler
 
 
 # 子大盘配置映射

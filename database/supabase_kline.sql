@@ -43,6 +43,21 @@ CREATE TABLE agent_kline_data (
     UNIQUE(period, timestamp)
 );
 
+-- 百战大盘 K 线表
+CREATE TABLE baizhan_kline_data (
+    id BIGSERIAL PRIMARY KEY,
+    period kline_period NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    open_price DECIMAL(12, 2),
+    close_price DECIMAL(12, 2),
+    high_price DECIMAL(12, 2),
+    low_price DECIMAL(12, 2),
+    volume BIGINT,
+    turnover DECIMAL(18, 2),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(period, timestamp)
+);
+
 -- 大盘
 CREATE INDEX idx_dapan_kline_period ON total_kline_data(period);
 CREATE INDEX idx_dapan_kline_timestamp ON total_kline_data(timestamp);
@@ -60,3 +75,9 @@ CREATE INDEX idx_agent_kline_period ON agent_kline_data(period);
 CREATE INDEX idx_agent_kline_timestamp ON agent_kline_data(timestamp);
 CREATE INDEX idx_agent_kline_period_timestamp
     ON agent_kline_data(period, timestamp);
+
+-- 百战
+CREATE INDEX idx_baizhan_kline_period ON baizhan_kline_data(period);
+CREATE INDEX idx_baizhan_kline_timestamp ON baizhan_kline_data(timestamp);
+CREATE INDEX idx_baizhan_kline_period_timestamp
+    ON baizhan_kline_data(period, timestamp);
