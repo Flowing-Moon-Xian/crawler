@@ -516,6 +516,9 @@ CREATE TABLE positions (
     market_index market_index_type NOT NULL,           -- 板块：total / qianzhan / agent / baizhan / sticker
     item_name VARCHAR(255) NOT NULL,                  -- 商品名称（冗余字段，便于查询）
     quantity INTEGER NOT NULL,                        -- 持仓数量
+    entry_price DECIMAL(12, 2),                       -- 平均买入价格
+    entry_time TIMESTAMPTZ,                           -- 首次建仓时间
+    max_price DECIMAL(12, 2),                         -- 持仓期间最高价（用于回撤保护）
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(item_statistics_id, market_index)          -- 同一商品在同一板块仅允许一条持仓记录

@@ -1,0 +1,46 @@
+# Docker 构建忽略文件
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# 环境变量
+.env
+.env.local
+
+# 数据文件
+data/
+*.json
+*.csv
+
+# 日志
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# 文档
+docs/
+*.md
+!DOCKER_GUIDE.md
+
+# 测试
+tests/
+*.test.py
+
+# 示例
+examples/

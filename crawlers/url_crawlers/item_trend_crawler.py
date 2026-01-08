@@ -35,10 +35,11 @@ https://api.steamdt.com/user/steam/type-trend/v2/item/details?timestamp=17647493
 
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
 
+import logging
 from crawler.config.config import Config
 from crawler.database.supabase_client import SupabaseManager
 from crawler.database.models import TrendData, KlinePeriod
@@ -47,8 +48,25 @@ from crawler.database.models import TrendData, KlinePeriod
 class ItemTrendCrawler:
     """具体商品走势数据爬虫"""
 
-    # 目前 period 直接使用 DAILY，后续如需要可以扩展为按 typeDay / dateType 映射
-    DEFAULT_PERIOD = KlinePeriod.DAILY
+    @staticmethod
+    def determine_period(type_day: int) -> KlinePeriod:
+        """
+        根据 typeDay 参数确定数据粒度
+        
+        根据实际测试结果：
+        - typeDay 1-2 (近一月、三个月): 返回小时级数据（每天 ~24 条）
+        - typeDay 3-5 (六个月、一年、三年): 返回日级数据（每天 1 条）
+        
+        Args:
+            type_day: 时间范围 (1=近一月, 2=三个月, 3=六个月, 4=一年, 5=三年)
+            
+        Returns:
+            KlinePeriod.HOURLY 或 KlinePeriod.DAILY
+        """
+        if type_day in [1, 2]:
+            return KlinePeriod.HOURLY
+        else:
+            return KlinePeriod.DAILY
 
     def __init__(self, config: Optional[Config] = None):
         """
@@ -58,6 +76,7 @@ class ItemTrendCrawler:
             config: 配置对象，如果为 None 则从环境变量加载
         """
         self.config = config or Config.from_env()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         # 初始化 Supabase
         if self.config.supabase:
@@ -107,12 +126,54 @@ class ItemTrendCrawler:
                 .execute()
             )
             rows = result.data or []
+            rows = result.data or []
             if not rows:
-                print(f"在 item_statistics 中未找到 steamdt_id={steamdt_id} 的记录")
+                self.logger.warning(f"在 item_statistics 中未找到 steamdt_id={steamdt_id} 的记录")
                 return None
             return rows[0].get("id")
         except Exception as e:
-            print(f"查询 item_statistics 失败 (steamdt_id={steamdt_id}): {e}")
+            self.logger.error(f"查询 item_statistics 失败 (steamdt_id={steamdt_id}): {e}")
+            return None
+    
+    def get_last_trend_timestamp(
+        self,
+        item_statistics_id: int,
+        type_day: int
+    ) -> Optional[datetime]:
+        """
+        获取指定商品和 type_day 的最后更新时间
+        
+        Args:
+            item_statistics_id: 商品统计 ID
+            type_day: 时间范围
+            
+        Returns:
+            最后更新时间，如果没有数据则返回 None
+        """
+        period = self.determine_period(type_day)
+        
+        try:
+            result = (
+                self.supabase.client.table("trend_data")
+                .select("timestamp")
+                .eq("item_statistics_id", item_statistics_id)
+                .eq("period", period.value)
+                .order("timestamp", desc=True)
+                .limit(1)
+                .execute()
+            )
+            
+            if result.data and len(result.data) > 0:
+                timestamp_str = result.data[0]["timestamp"]
+                # 处理时区信息
+                if timestamp_str.endswith('Z'):
+                    timestamp_str = timestamp_str.replace('Z', '+00:00')
+                return datetime.fromisoformat(timestamp_str)
+            
+            
+            return None
+        except Exception as e:
+            self.logger.error(f"查询最新趋势数据时间戳失败: {e}")
             return None
 
     # ==============================
@@ -141,7 +202,6 @@ class ItemTrendCrawler:
         """
         if timestamp is None:
             timestamp = int(time.time() * 1000)
-            print(f"未提供 timestamp，使用当前时间戳（毫秒）: {timestamp}")
 
         json_data = {
             "timestamp": str(timestamp),
@@ -170,35 +230,37 @@ class ItemTrendCrawler:
             data = response.json()
 
             if not data.get("success"):
-                print(f"API 返回失败: {data.get('errorMsg', '未知错误')}")
-                return None
+                error_msg = data.get('errorMsg', '未知错误')
+                self.logger.error(f"API 返回失败: {error_msg}")
+                raise Exception(f"API Error: {error_msg}")
 
             trend_data = data.get("data", [])
-            if not trend_data:
-                print("API 返回数据为空")
-                return None
+            # 如果 trend_data 为 None，设为空列表
+            if trend_data is None:
+                trend_data = []
 
-            print(
+            if not trend_data:
+                self.logger.info("API 返回数据为空")
+                return []
+
+            self.logger.info(
                 f"成功获取 {len(trend_data)} 条走势数据 "
                 f"(itemId={item_id}, typeDay={type_day}, dateType={date_type})"
             )
             return trend_data
 
         except requests.RequestException as e:
-            print(f"API 请求失败: {e}")
+            self.logger.error(f"API 请求失败: {e}")
             if hasattr(e, "response") and e.response is not None:
                 try:
                     error_data = e.response.json()
-                    print(f"错误详情: {error_data}")
+                    self.logger.error(f"错误详情: {error_data}")
                 except Exception:
-                    print(f"响应内容: {e.response.text[:500]}")
-            return None
+                    self.logger.error(f"响应内容: {e.response.text[:500]}")
+            raise
         except Exception as e:
-            print(f"获取走势数据失败: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return None
+            self.logger.error(f"获取走势数据失败: {e}")
+            raise
 
     # ==============================
     # 解析与保存
@@ -214,11 +276,11 @@ class ItemTrendCrawler:
         """
         try:
             if len(item) < 8:
-                print(f"数据格式不正确，期望 8 个字段，实际 {len(item)} 个: {item}")
+                self.logger.warning(f"数据格式不正确，期望 8 个字段，实际 {len(item)} 个: {item}")
                 return None
 
             timestamp_str = str(item[0])
-            price = float(item[1])
+            price = float(item[1]) if item[1] is not None else None
             items_for_sale = int(item[2]) if item[2] is not None else None
             buying_price = float(item[3]) if item[3] is not None else None
             buy_orders = int(item[4]) if item[4] is not None else None
@@ -227,9 +289,10 @@ class ItemTrendCrawler:
             circulation_str = item[7]
             circulation = int(circulation_str) if circulation_str not in (None, "") else None
 
-            # 将时间戳（秒）转换为 datetime
+            # 将时间戳（秒）转换为 datetime (UTC)
             timestamp_seconds = int(timestamp_str)
-            timestamp_dt = datetime.fromtimestamp(timestamp_seconds)
+            # 必须使用 UTC 以确保是 offset-aware，与数据库取出的时间兼容
+            timestamp_dt = datetime.fromtimestamp(timestamp_seconds, timezone.utc)
 
             return TrendData(
                 item_statistics_id=item_statistics_id,
@@ -244,7 +307,7 @@ class ItemTrendCrawler:
                 turnover=Decimal(str(turnover)) if turnover is not None else None,
             )
         except (ValueError, IndexError, TypeError) as e:
-            print(f"解析走势数据失败: {e}, 数据: {item}")
+            self.logger.error(f"解析走势数据失败: {e}, 数据: {item}")
             return None
 
     def save_trend_data(
@@ -254,26 +317,69 @@ class ItemTrendCrawler:
         type_day: int,
         date_type: int = 3,
         batch_size: int = 100,
+        min_timestamp: Optional[datetime] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> int:
         """
         保存走势数据到 trend_data 表
 
-        目前 period 统一使用 DAILY，如后续需要可根据 typeDay/dateType 做更复杂映射。
+        根据 typeDay 参数动态确定 period：
+        - typeDay 1-2: HOURLY（小时级数据）
+        - typeDay 3-5: DAILY（日级数据）
+        
+        Args:
+            min_timestamp: 最小时间戳，只保存大于此时间的数据（用于增量更新）
+            start_time: 开始时间，只保存 >= 此时间的数据
+            end_time: 结束时间，只保存 <= 此时间的数据
         """
-        period = self.DEFAULT_PERIOD
+        period = self.determine_period(type_day)
 
         models: List[TrendData] = []
+        filtered_count = 0
         for item in trend_data:
             parsed = self.parse_trend_item(item, period, item_statistics_id)
             if parsed:
+                # 增量更新过滤
+                if min_timestamp is not None and parsed.timestamp <= min_timestamp:
+                    filtered_count += 1
+                    continue
+                
+                # 时间段过滤
+                if start_time and parsed.timestamp < start_time:
+                    filtered_count += 1
+                    continue
+                if end_time and parsed.timestamp > end_time:
+                    filtered_count += 1
+                    continue
+
+                # 粒度过滤：确保只保存整点/整天的数据，过滤掉未完成的时间点
+                # 这里的 timestamp 已经是 UTC 时间 (offset-aware)
+                if period == KlinePeriod.DAY:
+                    # 日线：必须是 00:00:00 UTC
+                    if not (parsed.timestamp.hour == 0 and parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
+                        filtered_count += 1
+                        continue
+                elif period == KlinePeriod.HOUR:
+                    # 小时线：必须是 XX:00:00
+                    if not (parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
+                        filtered_count += 1
+                        continue
+                
                 models.append(parsed)
 
+        if filtered_count > 0:
+            if min_timestamp:
+                self.logger.info(f"过滤掉 {filtered_count} 条数据（<= {min_timestamp} 或不在时间范围 [{start_time} ~ {end_time}] 内，或非整点/整天数据）")
+            else:
+                self.logger.info(f"过滤掉 {filtered_count} 条数据（不在时间范围 [{start_time} ~ {end_time}] 内，或非整点/整天数据）")
+        
         if not models:
-            print("没有有效的走势数据可保存")
+            self.logger.info("没有需要更新的走势数据")
             return 0
 
         rows = [m.to_dict() for m in models]
-        print(
+        self.logger.info(
             f"准备保存 {len(rows)} 条走势数据到 trend_data 表 "
             f"(item_statistics_id={item_statistics_id}, period={period.value}, typeDay={type_day}, dateType={date_type})"
         )
@@ -288,7 +394,7 @@ class ItemTrendCrawler:
                 inserted_count = len(result) if result else 0
                 total_inserted += inserted_count
                 skipped_count += len(batch) - inserted_count
-                print(
+                self.logger.debug(
                     f"批量插入 {inserted_count} 条数据 "
                     f"(进度: {min(i + batch_size, len(rows))}/{len(rows)})"
                 )
@@ -296,7 +402,7 @@ class ItemTrendCrawler:
                 error_msg = str(e).lower()
                 # 唯一约束冲突：item_statistics_id + period + timestamp
                 if "unique" in error_msg or "duplicate" in error_msg or "23505" in error_msg:
-                    print("批量插入遇到唯一约束冲突，改为逐条插入（只保存不存在的记录）...")
+                    self.logger.warning("批量插入遇到唯一约束冲突，改为逐条插入（只保存不存在的记录）...")
                     for item in batch:
                         try:
                             self.supabase.insert_data("trend_data", item)
@@ -311,10 +417,10 @@ class ItemTrendCrawler:
                                 skipped_count += 1
                                 continue
                             else:
-                                print(f"插入单条数据失败: {single_e}")
+                                self.logger.error(f"插入单条数据失败: {single_e}")
                                 skipped_count += 1
                 else:
-                    print(f"批量插入失败: {e}，改为逐条插入...")
+                    self.logger.warning(f"批量插入失败: {e}，改为逐条插入...")
                     for item in batch:
                         try:
                             self.supabase.insert_data("trend_data", item)
@@ -329,10 +435,10 @@ class ItemTrendCrawler:
                                 skipped_count += 1
                                 continue
                             else:
-                                print(f"插入单条数据失败: {single_e}")
+                                self.logger.error(f"插入单条数据失败: {single_e}")
                                 skipped_count += 1
 
-        print(
+        self.logger.info(
             f"成功保存 {total_inserted} 条走势数据到 trend_data 表，"
             f"跳过 {skipped_count} 条已存在的记录"
         )
@@ -350,6 +456,9 @@ class ItemTrendCrawler:
         date_type: int = 3,
         platform: str = "ALL",
         special_style: str = "",
+        incremental: bool = True,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> int:
         """
         爬取并保存「单个商品」的走势数据
@@ -357,14 +466,26 @@ class ItemTrendCrawler:
         - 根据 itemId（SteamDT ID）去 item_statistics 表找对应的 steamdt_id -> item_statistics_id
         - 拉取该商品的走势数据
         - 写入 trend_data 表
+        
+        Args:
+            incremental: 是否启用增量更新（默认 True）
+            start_time: 开始时间，只保存 >= 此时间的数据
+            end_time: 结束时间，只保存 <= 此时间的数据
         """
         # 1. 查 item_statistics_id（使用 steamdt_id=itemId）
         item_statistics_id = self._get_item_statistics_id_by_steamdt(item_id)
         if not item_statistics_id:
-            print(f"未找到 steamdt_id={item_id} 对应的 item_statistics 记录，终止。")
+            self.logger.warning(f"未找到 steamdt_id={item_id} 对应的 item_statistics 记录，终止。")
             return 0
+        
+        # 2. 获取最新时间戳（如果启用增量更新）
+        min_timestamp = None
+        if incremental:
+            min_timestamp = self.get_last_trend_timestamp(item_statistics_id, type_day)
+            if min_timestamp:
+                self.logger.info(f"增量更新：只保存 {min_timestamp} 之后的数据")
 
-        # 2. 拉取走势数据
+        # 3. 拉取走势数据
         trend_data = self.fetch_trend_data(
             item_id=item_id,
             type_day=type_day,
@@ -376,12 +497,15 @@ class ItemTrendCrawler:
         if not trend_data:
             return 0
 
-        # 3. 保存到 trend_data 表
+        # 4. 保存到 trend_data 表（传入 min_timestamp 和时间范围用于过滤）
         return self.save_trend_data(
             item_statistics_id=item_statistics_id,
             trend_data=trend_data,
             type_day=type_day,
             date_type=date_type,
+            min_timestamp=min_timestamp,
+            start_time=start_time,
+            end_time=end_time,
         )
 
 

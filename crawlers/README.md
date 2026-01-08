@@ -510,6 +510,114 @@ python3 -m crawler.crawlers.json_savers.steamdt_api_crawler \
 
 ---
 
+### 每日自动爬取调度器 (`daily_kline_trend_scheduler.py`)
+
+每天 00:00 自动爬取 K 线和趋势数据，支持增量更新。
+
+```bash
+# 一次性执行（测试模式，限制5个商品）
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler \\\n  --once \\\n  --limit 5
+
+# 守护进程模式（每天 00:00 自动执行）
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler
+
+# 自定义调度时间（每小时执行一次）
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler \\\n  --schedule-time "0 * * * *"
+```
+
+**参数说明：**
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `--market-type` | str | 否 | 大盘类型，不指定则爬取所有商品。可选: total, qianzhan, agent, baizhan |
+| `--kline-types` | int[] | 否 | K 线类型列表（默认: 2，即日K），可选: 1=时K, 2=日K, 3=周K |
+| `--type-days` | int[] | 否 | 走势时间范围列表（默认: 1，即近一月），可选: 1=近一月, 2=三个月, 3=六个月, 4=一年, 5=三年 |
+| `--delay` | float | 否 | 每次请求之间的延迟（秒，默认: 1.0） |
+| `--schedule-time` | str | 否 | Cron 表达式（默认: '0 0 * * *'，即每天 00:00） |
+| `--once` | flag | 否 | 只执行一次，不启动调度器 |
+| `--limit` | int | 否 | 限制处理的商品数量（用于测试），不指定则处理所有 |
+
+**增量更新逻辑：**
+
+- **K 线数据**：查询 `kline_data` 表的最后时间戳，只拉取新数据
+  - 时K：超过 1 小时更新
+  - 日K：超过 1 天更新
+  - 周K：超过 7 天更新
+- **走势数据**：查询 `trend_data` 表的最后时间戳，超过 1 天则更新
+
+**示例：**
+
+```bash
+# 测试模式：一次性执行，只处理前5个商品
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler \\\n  --once \\\n  --limit 5
+
+# 爬取千百战大盘商品的日K和近一月走势
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler \\\n  --market-type qianzhan \\\n  --kline-types 2 \\\n  --type-days 1 \\\n  --once
+
+# 守护进程模式：每天 00:00 自动执行
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler
+
+# 守护进程模式：每小时执行一次（用于测试）
+python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler \\\n  --schedule-time "0 * * * *"
+```
+
+**部署方式：**
+
+1. **使用 systemd（推荐）**：
+
+创建 `/etc/systemd/system/cs2-daily-crawler.service`：
+
+```ini
+[Unit]
+Description=CS2 Daily K-line and Trend Data Crawler
+After=network.target
+
+[Service]
+Type=simple
+User=your-username
+WorkingDirectory=/path/to/cs2/crawler
+Environment="SUPABASE_URL=your-supabase-url"
+Environment="SUPABASE_KEY=your-supabase-key"
+ExecStart=/usr/bin/python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动服务：
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable cs2-daily-crawler
+sudo systemctl start cs2-daily-crawler
+sudo systemctl status cs2-daily-crawler
+```
+
+2. **使用 cron**：
+
+```bash
+# 编辑 crontab
+crontab -e
+
+# 添加以下行（每天 00:00 执行）
+0 0 * * * cd /path/to/cs2 && /usr/bin/python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler --once >> /var/log/cs2-crawler.log 2>&1
+```
+
+3. **使用 nohup（简单方式）**：
+
+```bash
+nohup python3 -m crawler.crawlers.db_updaters.daily_kline_trend_scheduler > crawler.log 2>&1 &
+```
+
+**依赖安装：**
+
+```bash
+pip3 install apscheduler
+```
+
+---
+
 ## 注意事项
 
 1. **时间戳格式**：

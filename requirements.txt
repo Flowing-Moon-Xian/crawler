@@ -1,0 +1,21 @@
+
+# CS2 爬虫 API 额外依赖
+# CS2 爬虫项目依赖
+# FastAPI 框架
+# prometheus-fastapi-instrumentator>=6.0.0
+# 工具库
+# 数据库
+# 调度器
+# 数据验证
+# 核心依赖
+# 可选：性能监控
+apscheduler>=3.10.0
+fastapi>=0.104.0
+postgrest>=0.13.0
+pydantic>=2.0.0
+python-dateutil>=2.8.2
+python-dotenv>=1.0.0
+pytz>=2023.3
+requests>=2.31.0
+supabase>=2.0.0
+uvicorn[standard]>=0.24.0

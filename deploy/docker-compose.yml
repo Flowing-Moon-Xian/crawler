@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # 统一服务 (API + Worker环境)
+  crawler:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # container_name 不能包含冒号
+    container_name: cs2-crawler
+    image: cs2-crawler:1.0.0
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+    # 内存限制：给予足够空间供 API 和偶尔的 Worker 运行
+    mem_limit: 800m
+    mem_reservation: 256m
+    memswap_limit: 1200m
+    volumes:
+      # 挂载日志目录到宿主机
+      - ./logs:/app/logs
+    networks:
+      - crawler-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # 默认启动 API 服务
+    command: uvicorn crawler.api.main:app --host 0.0.0.0 --port 8000
+
+networks:
+  crawler-network:
+    driver: bridge

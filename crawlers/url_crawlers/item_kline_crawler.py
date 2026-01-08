@@ -23,10 +23,10 @@ URL 参数：
 
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from decimal import Decimal
-
+import logging
 from crawler.config.config import Config
 from crawler.database.supabase_client import SupabaseManager
 from crawler.database.models import KlineData, KlinePeriod
@@ -49,6 +49,7 @@ class ItemKlineCrawler:
             config: 配置对象，如果为 None 则从环境变量加载
         """
         self.config = config or Config.from_env()
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         # 通过 Config 初始化 Supabase（如果配置存在）
         if self.config.supabase:
@@ -100,11 +101,11 @@ class ItemKlineCrawler:
             )
             rows = result.data or []
             if not rows:
-                print(f"在 item_statistics 中未找到 steamdt_id={steamdt_id} 的记录")
+                self.logger.warning(f"在 item_statistics 中未找到 steamdt_id={steamdt_id} 的记录")
                 return None
             return rows[0].get("id")
         except Exception as e:
-            print(f"查询 item_statistics 失败 (steamdt_id={steamdt_id}): {e}")
+            self.logger.error(f"查询 item_statistics 失败 (steamdt_id={steamdt_id}): {e}")
             return None
 
     # ==============================
@@ -133,7 +134,6 @@ class ItemKlineCrawler:
         """
         if timestamp is None:
             timestamp = int(time.time() * 1000)
-            print(f"未提供 timestamp，使用当前时间戳（毫秒）: {timestamp}")
 
         # GET 请求，参数放在 URL 中
         params = {
@@ -160,32 +160,34 @@ class ItemKlineCrawler:
             data = response.json()
 
             if not data.get("success"):
-                print(f"API 返回失败: {data.get('errorMsg', '未知错误')}")
-                return None
+                error_msg = data.get('errorMsg', '未知错误')
+                self.logger.error(f"API 返回失败: {error_msg}")
+                raise Exception(f"API Error: {error_msg}")
 
             kline_data = data.get("data", [])
-            if not kline_data:
-                print("API 返回数据为空")
-                return None
+            # 如果 kline_data 为 None，设为空列表
+            if kline_data is None:
+                kline_data = []
 
-            print(f"成功获取 {len(kline_data)} 条 K 线数据 (type={kline_type}, typeVal={type_val})")
+            if not kline_data:
+                self.logger.info("API 返回数据为空")
+                return []
+
+            self.logger.info(f"成功获取 {len(kline_data)} 条 K 线数据 (type={kline_type}, typeVal={type_val})")
             return kline_data
 
         except requests.RequestException as e:
-            print(f"API 请求失败: {e}")
+            self.logger.error(f"API 请求失败: {e}")
             if hasattr(e, "response") and e.response is not None:
                 try:
                     error_data = e.response.json()
-                    print(f"错误详情: {error_data}")
+                    self.logger.error(f"错误详情: {error_data}")
                 except Exception:
-                    print(f"响应内容: {e.response.text[:500]}")
-            return None
+                    self.logger.error(f"响应内容: {e.response.text[:500]}")
+            raise
         except Exception as e:
-            print(f"获取 K 线数据失败: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return None
+            self.logger.error(f"获取 K 线数据失败: {e}")
+            raise
 
     # ==============================
     # 解析与保存
@@ -201,36 +203,38 @@ class ItemKlineCrawler:
         """
         try:
             if len(item) < 7:
-                print(f"数据格式不正确，期望 7 个字段，实际 {len(item)} 个: {item}")
+                self.logger.warning(f"数据格式不正确，期望 7 个字段，实际 {len(item)} 个: {item}")
                 return None
 
             timestamp_str = str(item[0])
-            open_price = float(item[1])
-            close_price = float(item[2])
-            high_price = float(item[3])
-            low_price = float(item[4])
-            volume_str = str(item[5])
-            turnover = float(item[6])
+            # 安全处理可能为 None 的字段
+            open_price = float(item[1]) if item[1] is not None else None
+            close_price = float(item[2]) if item[2] is not None else None
+            high_price = float(item[3]) if item[3] is not None else None
+            low_price = float(item[4]) if item[4] is not None else None
+            volume_val = item[5]
+            turnover = float(item[6]) if item[6] is not None else None
 
-            # 将时间戳（秒）转换为 datetime
+            # 将时间戳（秒）转换为 datetime (UTC)
             timestamp_seconds = int(timestamp_str)
-            timestamp_dt = datetime.fromtimestamp(timestamp_seconds)
+            # 必须使用 UTC 以确保是 offset-aware，与数据库取出的时间兼容
+            timestamp_dt = datetime.fromtimestamp(timestamp_seconds, timezone.utc)
 
-            volume = int(volume_str) if volume_str else None
+            volume = int(volume_val) if volume_val is not None else None
 
             return KlineData(
                 item_statistics_id=item_statistics_id,
                 period=period,
                 timestamp=timestamp_dt,
-                open_price=Decimal(str(open_price)) if open_price else None,
-                close_price=Decimal(str(close_price)) if close_price else None,
-                high_price=Decimal(str(high_price)) if high_price else None,
-                low_price=Decimal(str(low_price)) if low_price else None,
+                open_price=Decimal(str(open_price)) if open_price is not None else None,
+                close_price=Decimal(str(close_price)) if close_price is not None else None,
+                high_price=Decimal(str(high_price)) if high_price is not None else None,
+                low_price=Decimal(str(low_price)) if low_price is not None else None,
                 volume=volume,
-                turnover=Decimal(str(turnover)) if turnover else None,
+                turnover=Decimal(str(turnover)) if turnover is not None else None,
             )
         except (ValueError, IndexError, TypeError) as e:
-            print(f"解析 K 线数据失败: {e}, 数据: {item}")
+            self.logger.error(f"解析 K 线数据失败: {e}, 数据: {item}")
             return None
 
     def save_kline_data(
@@ -239,28 +243,60 @@ class ItemKlineCrawler:
         kline_data: List[List[Any]],
         kline_type: int,
         batch_size: int = 100,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> int:
         """
         保存商品 K 线数据到 kline_data 表
+        
+        Args:
+            start_time: 开始时间，只保存 >= 此时间的数据
+            end_time: 结束时间，只保存 <= 此时间的数据
         """
         period_enum = self.TYPE_TO_PERIOD.get(kline_type)
         if not period_enum:
-            print(f"不支持的 K 线类型: {kline_type}")
+            self.logger.error(f"不支持的 K 线类型: {kline_type}")
             return 0
 
-        # 解析为模型
+        # 解析为模型并过滤时间范围
         models: List[KlineData] = []
+        filtered_count = 0
+        
         for item in kline_data:
             parsed = self.parse_kline_item(item, period_enum, item_statistics_id)
             if parsed:
+                # 时间段过滤
+                if start_time and parsed.timestamp < start_time:
+                    filtered_count += 1
+                    continue
+                if end_time and parsed.timestamp > end_time:
+                    filtered_count += 1
+                    continue
+
+                # 粒度过滤：确保只保存整点/整天的数据，过滤掉未完成的时间点
+                # 这里的 timestamp 已经是 UTC 时间 (offset-aware)
+                if period_enum == KlinePeriod.DAY:
+                    # 日线：必须是 00:00:00 UTC
+                    if not (parsed.timestamp.hour == 0 and parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
+                        filtered_count += 1
+                        continue
+                elif period_enum == KlinePeriod.HOUR:
+                    # 小时线：必须是 XX:00:00
+                    if not (parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
+                        filtered_count += 1
+                        continue
+                
                 models.append(parsed)
+        
+        if filtered_count > 0:
+            self.logger.info(f"过滤掉 {filtered_count} 条数据（时间范围外或非整点/整天数据）")
 
         if not models:
-            print("没有有效的数据可保存")
+            self.logger.info("没有有效的数据可保存")
             return 0
 
         rows = [m.to_dict() for m in models]
-        print(f"准备保存 {len(rows)} 条 K 线数据到 kline_data 表 (item_statistics_id={item_statistics_id}, period={period_enum.value})")
+        self.logger.info(f"准备保存 {len(rows)} 条 K 线数据到 kline_data 表 (item_statistics_id={item_statistics_id}, period={period_enum.value})")
 
         total_inserted = 0
         skipped_count = 0
@@ -272,7 +308,7 @@ class ItemKlineCrawler:
                 inserted_count = len(result) if result else 0
                 total_inserted += inserted_count
                 skipped_count += len(batch) - inserted_count
-                print(
+                self.logger.debug(
                     f"批量插入 {inserted_count} 条数据 "
                     f"(进度: {min(i + batch_size, len(rows))}/{len(rows)})"
                 )
@@ -280,7 +316,7 @@ class ItemKlineCrawler:
                 error_msg = str(e).lower()
                 # 唯一约束冲突：item_statistics_id + period + timestamp
                 if "unique" in error_msg or "duplicate" in error_msg or "23505" in error_msg:
-                    print("批量插入遇到唯一约束冲突，改为逐条插入（只保存不存在的记录）...")
+                    self.logger.warning("批量插入遇到唯一约束冲突，改为逐条插入（只保存不存在的记录）...")
                     for item in batch:
                         try:
                             self.supabase.insert_data("kline_data", item)
@@ -295,10 +331,10 @@ class ItemKlineCrawler:
                                 skipped_count += 1
                                 continue
                             else:
-                                print(f"插入单条数据失败: {single_e}")
+                                self.logger.error(f"插入单条数据失败: {single_e}")
                                 skipped_count += 1
                 else:
-                    print(f"批量插入失败: {e}，改为逐条插入...")
+                    self.logger.warning(f"批量插入失败: {e}，改为逐条插入...")
                     for item in batch:
                         try:
                             self.supabase.insert_data("kline_data", item)
@@ -313,10 +349,10 @@ class ItemKlineCrawler:
                                 skipped_count += 1
                                 continue
                             else:
-                                print(f"插入单条数据失败: {single_e}")
+                                self.logger.error(f"插入单条数据失败: {single_e}")
                                 skipped_count += 1
 
-        print(
+        self.logger.info(
             f"成功保存 {total_inserted} 条商品 K 线数据到 kline_data 表，"
             f"跳过 {skipped_count} 条已存在的记录"
         )
@@ -334,6 +370,8 @@ class ItemKlineCrawler:
         max_time: Optional[int] = None,
         platform: str = "ALL",
         special_style: str = "",
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
     ) -> int:
         """
         爬取并保存「单个商品」的 K 线数据
@@ -341,11 +379,15 @@ class ItemKlineCrawler:
         - 根据 type_val（SteamDT ID）去 item_statistics 表找 item_statistics_id
         - 拉取该商品的 K 线数据
         - 写入 kline_data 表
+        
+        Args:
+            start_time: 开始时间，只保存 >= 此时间的数据
+            end_time: 结束时间，只保存 <= 此时间的数据
         """
         # 1. 查 item_statistics_id
         item_statistics_id = self._get_item_statistics_id_by_steamdt(type_val)
         if not item_statistics_id:
-            print(f"未找到 steamdt_id={type_val} 对应的 item_statistics 记录，终止。")
+            self.logger.warning(f"未找到 steamdt_id={type_val} 对应的 item_statistics 记录，终止。")
             return 0
 
         # 2. 拉取 K 线数据
@@ -360,11 +402,13 @@ class ItemKlineCrawler:
         if not kline_data:
             return 0
 
-        # 3. 保存到 kline_data 表
+        # 3. 保存到 kline_data 表（传入时间范围过滤）
         return self.save_kline_data(
             item_statistics_id=item_statistics_id,
             kline_data=kline_data,
             kline_type=kline_type,
+            start_time=start_time,
+            end_time=end_time,
         )
 
 
