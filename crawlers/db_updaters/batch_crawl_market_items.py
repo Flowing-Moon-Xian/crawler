@@ -58,7 +58,8 @@ class BatchCrawlMarketItems:
     def fetch_market_items(
         self,
         market_index_type: MarketIndexType,
-        page_size: int = 1000
+        page_size: int = 1000,
+        min_created_at: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         从数据库获取指定大盘的商品列表
@@ -70,7 +71,10 @@ class BatchCrawlMarketItems:
         Returns:
             商品列表，每个商品包含 item_statistics_id 和 steamdt_id
         """
-        self.logger.info(f"开始查询大盘类型为 '{market_index_type.value}' 的商品...")
+        if min_created_at:
+            self.logger.info(f"开始查询大盘类型为 '{market_index_type.value}' 且创建时间 > {min_created_at} 的商品...")
+        else:
+            self.logger.info(f"开始查询大盘类型为 '{market_index_type.value}' 的商品...")
         
         # 第一步：查询关系表获取所有 item_statistics_id
         item_statistics_ids = []
@@ -81,13 +85,16 @@ class BatchCrawlMarketItems:
             end = offset + page_size - 1
             
             try:
-                result = (
+                query = (
                     self.supabase.client.table("item_statistics_market_index_relations")
                     .select("item_statistics_id")
                     .eq("market_index_type", market_index_type.value)
-                    .range(start, end)
-                    .execute()
                 )
+                
+                if min_created_at:
+                    query = query.gt("created_at", min_created_at)
+                    
+                result = query.range(start, end).execute()
                 
                 records = result.data if result.data else []
                 if not records:
@@ -335,7 +342,9 @@ class BatchCrawlMarketItems:
         kline_types: List[int] = [1, 2],
         type_days: List[int] = [1],
         delay: float = 1.0,
-        limit: Optional[int] = None
+
+        limit: Optional[int] = None,
+        min_created_at: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         批量爬取所有商品的 K 线和走势数据
@@ -384,7 +393,10 @@ class BatchCrawlMarketItems:
         self.logger.info("=" * 60)
         
         # 获取商品列表
-        items = self.fetch_market_items(market_index_type)
+        items = self.fetch_market_items(
+            market_index_type=market_index_type, 
+            min_created_at=min_created_at
+        )
         
         if not items:
             self.logger.warning("未找到任何商品")
@@ -556,6 +568,12 @@ def main():
         default=None,
         help="限制处理的商品数量（用于测试），不指定则处理所有"
     )
+    parser.add_argument(
+        "--min-created-at",
+        type=str,
+        default=None,
+        help="最小创建时间（格式: YYYY-MM-DD 或 YYYY-MM-DD HH:MM:SS），只爬取在此之后创建的关联关系"
+    )
     
     args = parser.parse_args()
     
@@ -578,8 +596,10 @@ def main():
         max_date=args.max_date,
         kline_types=args.kline_types,
         type_days=args.type_days,
+
         delay=args.delay,
-        limit=args.limit
+        limit=args.limit,
+        min_created_at=args.min_created_at
     )
     
     if result["success"]:

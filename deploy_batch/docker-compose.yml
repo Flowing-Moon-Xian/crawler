@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  crawler-batch:
+    build:
+      context: ..
+      dockerfile: deploy_batch/Dockerfile
+    container_name: cs2-crawler-batch
+    image: cs2-crawler-batch:latest
+    restart: unless-stopped
+    environment:
+      # 请在 .env 文件中设置这些变量，或者直接在这里修改（不推荐提交到仓库）
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - TZ=Asia/Shanghai
+    volumes:
+      # 挂载日志目录到宿主机，方便查看日志
+      - ../../logs:/app/logs
+    # 资源限制（可选，根据服务器配置调整）
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    # 默认命令已在 Dockerfile 中定义 (tail -f /dev/null)，这里不需要覆盖

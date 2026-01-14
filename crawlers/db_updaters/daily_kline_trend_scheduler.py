@@ -397,12 +397,18 @@ class DailyKlineTrendScheduler:
                 )
                 
                 if should_update:
+                    # 获取最后更新时间,用于增量过滤
+                    last_timestamp = self.get_last_kline_timestamp(
+                        item_statistics_id, kline_type
+                    )
+                    
                     count = self.kline_crawler.crawl_and_save(
                         kline_type=kline_type,
                         type_val=steamdt_id,
                         max_time=max_time,
                         platform="ALL",
-                        special_style=""
+                        special_style="",
+                        start_time=last_timestamp  # 只保存比最后时间戳更新的数据
                     )
                     
                     if count > 0:
@@ -426,11 +432,16 @@ class DailyKlineTrendScheduler:
                     )
                     
             except Exception as e:
+                error_msg = str(e)
+                # 添加更详细的错误说明
+                if "DAY" in error_msg or "HOUR" in error_msg or "WEEK" in error_msg:
+                    error_msg = f"{error_msg} (可能原因: period 字段值不正确，应为 'daily'/'hourly'/'weekly' 而非大写形式)"
+                
                 self.logger.error(
-                    f"  ❌ K 线类型 {kline_type} 失败: {e} "
+                    f"  ❌ K 线类型 {kline_type} 失败: {error_msg} "
                     f"[{item_name} | item_id={item_statistics_id} | steamdt_id={steamdt_id}]"
                 )
-                stats["errors"].append(f"K线类型{kline_type}: {str(e)}")
+                stats["errors"].append(f"K线类型{kline_type}: {error_msg}")
         
         # 爬取走势数据
         for type_day in self.type_days:
@@ -465,11 +476,16 @@ class DailyKlineTrendScheduler:
                     )
                     
             except Exception as e:
+                error_msg = str(e)
+                # 添加更详细的错误说明
+                if "DAY" in error_msg or "HOUR" in error_msg or "WEEK" in error_msg:
+                    error_msg = f"{error_msg} (可能原因: period 字段值不正确，应为 'daily'/'hourly'/'weekly' 而非大写形式)"
+                
                 self.logger.error(
-                    f"  ❌ 走势数据 type_day={type_day} 失败: {e} "
+                    f"  ❌ 走势数据 type_day={type_day} 失败: {error_msg} "
                     f"[{item_name} | item_id={item_statistics_id} | steamdt_id={steamdt_id}]"
                 )
-                stats["errors"].append(f"走势数据type_day{type_day}: {str(e)}")
+                stats["errors"].append(f"走势数据type_day{type_day}: {error_msg}")
         
         return stats
     

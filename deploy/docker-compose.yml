@@ -13,8 +13,16 @@ services:
     ports:
       - "8000:8000"
     environment:
+      # Supabase 数据库配置
       - SUPABASE_URL=${SUPABASE_URL}
       - SUPABASE_KEY=${SUPABASE_KEY}
+      # 定时任务配置
+      - CRON_EXPRESSION=${CRON_EXPRESSION:-0 0 * * *}
+      - MARKET_TYPE=${MARKET_TYPE:-}
+      - KLINE_TYPES=${KLINE_TYPES:-2}
+      - TYPE_DAYS=${TYPE_DAYS:-3}
+      - CRAWL_DELAY=${CRAWL_DELAY:-1.0}
+      - CRAWL_LIMIT=${CRAWL_LIMIT:-}
     # 内存限制：给予足够空间供 API 和偶尔的 Worker 运行
     mem_limit: 800m
     mem_reservation: 256m

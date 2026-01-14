@@ -353,26 +353,21 @@ class ItemTrendCrawler:
                     filtered_count += 1
                     continue
 
-                # 粒度过滤：确保只保存整点/整天的数据，过滤掉未完成的时间点
-                # 这里的 timestamp 已经是 UTC 时间 (offset-aware)
-                if period == KlinePeriod.DAY:
-                    # 日线：必须是 00:00:00 UTC
-                    if not (parsed.timestamp.hour == 0 and parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
-                        filtered_count += 1
-                        continue
-                elif period == KlinePeriod.HOUR:
-                    # 小时线：必须是 XX:00:00
-                    if not (parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
-                        filtered_count += 1
-                        continue
-                
+                # 数据有效性过滤：过滤掉 transaction_volume 或 turnover 为空的无效数据
+                if parsed.transaction_volume is None or parsed.transaction_volume == 0:
+                    filtered_count += 1
+                    continue
+                if parsed.turnover is None or parsed.turnover == 0:
+                    filtered_count += 1
+                    continue
+
                 models.append(parsed)
 
         if filtered_count > 0:
             if min_timestamp:
-                self.logger.info(f"过滤掉 {filtered_count} 条数据（<= {min_timestamp} 或不在时间范围 [{start_time} ~ {end_time}] 内，或非整点/整天数据）")
+                self.logger.info(f"过滤掉 {filtered_count} 条数据（<= {min_timestamp} 或不在时间范围 [{start_time} ~ {end_time}] 内，或无效数据：transaction_volume/turnover为空）")
             else:
-                self.logger.info(f"过滤掉 {filtered_count} 条数据（不在时间范围 [{start_time} ~ {end_time}] 内，或非整点/整天数据）")
+                self.logger.info(f"过滤掉 {filtered_count} 条数据（不在时间范围 [{start_time} ~ {end_time}] 内，或无效数据：transaction_volume/turnover为空）")
         
         if not models:
             self.logger.info("没有需要更新的走势数据")

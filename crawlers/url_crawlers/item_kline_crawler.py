@@ -273,23 +273,18 @@ class ItemKlineCrawler:
                     filtered_count += 1
                     continue
 
-                # 粒度过滤：确保只保存整点/整天的数据，过滤掉未完成的时间点
-                # 这里的 timestamp 已经是 UTC 时间 (offset-aware)
-                if period_enum == KlinePeriod.DAY:
-                    # 日线：必须是 00:00:00 UTC
-                    if not (parsed.timestamp.hour == 0 and parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
-                        filtered_count += 1
-                        continue
-                elif period_enum == KlinePeriod.HOUR:
-                    # 小时线：必须是 XX:00:00
-                    if not (parsed.timestamp.minute == 0 and parsed.timestamp.second == 0):
-                        filtered_count += 1
-                        continue
-                
+                # 数据有效性过滤：过滤掉 volume 或 turnover 为空的无效数据
+                if parsed.volume is None or parsed.volume == 0:
+                    filtered_count += 1
+                    continue
+                if parsed.turnover is None or parsed.turnover == 0:
+                    filtered_count += 1
+                    continue
+
                 models.append(parsed)
         
         if filtered_count > 0:
-            self.logger.info(f"过滤掉 {filtered_count} 条数据（时间范围外或非整点/整天数据）")
+            self.logger.info(f"过滤掉 {filtered_count} 条数据（时间范围外或无效数据：volume/turnover为空）")
 
         if not models:
             self.logger.info("没有有效的数据可保存")
