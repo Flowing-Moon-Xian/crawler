@@ -17,6 +17,7 @@ from crawler.database.supabase_client import SupabaseManager
 from crawler.database.models import MarketIndexType
 from crawler.crawlers.url_crawlers.item_kline_crawler import ItemKlineCrawler
 from crawler.crawlers.url_crawlers.item_trend_crawler import ItemTrendCrawler
+from crawler.utils.timestamp_refresher import get_valid_timestamp
 
 
 class BatchCrawlMarketItems:
@@ -43,6 +44,9 @@ class BatchCrawlMarketItems:
         # 初始化爬虫
         self.kline_crawler = ItemKlineCrawler(self.config)
         self.trend_crawler = ItemTrendCrawler(self.config)
+        
+        # 当前有效的 timestamp (从 Playwright 获取)
+        self.current_timestamp = None
         
         # 设置日志
         self.logger = logging.getLogger("BatchCrawlMarketItems")
@@ -71,10 +75,11 @@ class BatchCrawlMarketItems:
         Returns:
             商品列表，每个商品包含 item_statistics_id 和 steamdt_id
         """
+        type_str = market_index_type.value if hasattr(market_index_type, "value") else str(market_index_type)
         if min_created_at:
-            self.logger.info(f"开始查询大盘类型为 '{market_index_type.value}' 且创建时间 > {min_created_at} 的商品...")
+            self.logger.info(f"开始查询大盘类型为 '{type_str}' 且创建时间 > {min_created_at} 的商品...")
         else:
-            self.logger.info(f"开始查询大盘类型为 '{market_index_type.value}' 的商品...")
+            self.logger.info(f"开始查询大盘类型为 '{type_str}' 的商品...")
         
         # 第一步：查询关系表获取所有 item_statistics_id
         item_statistics_ids = []
@@ -88,8 +93,14 @@ class BatchCrawlMarketItems:
                 query = (
                     self.supabase.client.table("item_statistics_market_index_relations")
                     .select("item_statistics_id")
-                    .eq("market_index_type", market_index_type.value)
                 )
+                
+                # 如果不是 "all"，才进行过滤
+                if market_index_type and str(market_index_type).lower() != "all" and str(market_index_type).lower() != "none":
+                    if hasattr(market_index_type, "value"):
+                         query = query.eq("market_index_type", market_index_type.value)
+                    else:
+                         query = query.eq("market_index_type", str(market_index_type))
                 
                 if min_created_at:
                     query = query.gt("created_at", min_created_at)
@@ -153,7 +164,7 @@ class BatchCrawlMarketItems:
                 self.logger.error(f"查询 item_statistics 表失败 (offset={offset}): {e}")
                 offset += page_size
         
-        self.logger.info(f"找到 {len(items)} 个有 steamdt_id 的商品（大盘类型: {market_index_type.value}）")
+        self.logger.info(f"找到 {len(items)} 个有 steamdt_id 的商品（大盘类型: {type_str}）")
         return items
     
     def crawl_item_kline(
@@ -212,7 +223,8 @@ class BatchCrawlMarketItems:
                         type_val=steamdt_id,
                         max_time=current_max_time,
                         platform="ALL",
-                        special_style=""
+                        special_style="",
+                        timestamp=self.current_timestamp
                     )
                     
                     stats["total"] += count
@@ -240,7 +252,8 @@ class BatchCrawlMarketItems:
                                 type_val=steamdt_id,
                                 max_time=target_min_time,
                                 platform="ALL",
-                                special_style=""
+                                special_style="",
+                                timestamp=self.current_timestamp
                             )
                             
                             stats["total"] += count
@@ -260,6 +273,15 @@ class BatchCrawlMarketItems:
                         
                 except Exception as e:
                     self.logger.error(f"爬取 K 线数据失败 (steamdt_id={steamdt_id}, kline_type={kline_type}, round={round_num}): {e}")
+                    
+                    # 失败后尝试获取新 timestamp
+                    self.logger.warning("检测到失败，启动 Playwright 获取 timestamp...")
+                    new_ts = get_valid_timestamp()
+                    if new_ts:
+                        self.current_timestamp = new_ts
+                        self.logger.info(f"获取 timestamp 成功: {self.current_timestamp}")
+                    else:
+                        self.logger.warning("获取 timestamp 失败")
                     stats["failed"] += 1
                     # 即使失败也继续下一轮
                     current_max_time -= THREE_MONTHS_SECONDS
@@ -315,7 +337,8 @@ class BatchCrawlMarketItems:
                     item_id=steamdt_id,
                     type_day=type_day,
                     platform="ALL",
-                    special_style=""
+                    special_style="",
+                    timestamp=self.current_timestamp
                 )
                 
                 stats["total"] += count
@@ -330,6 +353,15 @@ class BatchCrawlMarketItems:
                     
             except Exception as e:
                 self.logger.error(f"爬取走势数据失败 (steamdt_id={steamdt_id}, type_day={type_day}): {e}")
+                
+                 # 失败后尝试获取新 timestamp
+                self.logger.warning("检测到失败，启动 Playwright 获取 timestamp...")
+                new_ts = get_valid_timestamp()
+                if new_ts:
+                    self.current_timestamp = new_ts
+                    self.logger.info(f"获取 timestamp 成功: {self.current_timestamp}")
+                else:
+                    self.logger.warning("获取 timestamp 失败")
                 stats["failed"] += 1
         
         return stats
@@ -385,7 +417,8 @@ class BatchCrawlMarketItems:
         
         self.logger.info("=" * 60)
         self.logger.info("开始批量爬取大盘商品数据")
-        self.logger.info(f"大盘类型: {market_index_type.value}")
+        type_str = market_index_type.value if hasattr(market_index_type, "value") else str(market_index_type)
+        self.logger.info(f"大盘类型: {type_str}")
         self.logger.info(f"最大时间戳: {max_time} ({datetime.fromtimestamp(max_time).strftime('%Y-%m-%d %H:%M:%S')})")
         self.logger.info(f"K 线类型: {kline_types}")
         self.logger.info(f"走势时间范围: {type_days}")
@@ -525,7 +558,7 @@ def main():
         "--market-type",
         type=str,
         default="qianzhan",
-        choices=["total", "qianzhan", "agent","baizhan"],
+        choices=["total", "qianzhan", "agent","baizhan", "all"],
         help="大盘类型（默认: qianzhan）"
     )
     parser.add_argument(
@@ -582,7 +615,8 @@ def main():
         "total": MarketIndexType.TOTAL,
         "qianzhan": MarketIndexType.QIANZHAN,
         "agent": MarketIndexType.AGENT,
-        "baizhan": MarketIndexType.BAIZHAN
+        "baizhan": MarketIndexType.BAIZHAN,
+        "all": "all"
     }
     market_index_type = market_type_map[args.market_type]
     

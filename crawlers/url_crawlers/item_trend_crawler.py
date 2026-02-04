@@ -372,6 +372,57 @@ class ItemTrendCrawler:
         if not models:
             self.logger.info("没有需要更新的走势数据")
             return 0
+        
+        # 优化：先查询数据库中已存在的记录，避免后面批量插入报错
+        try:
+            min_ts = min(m.timestamp for m in models)
+            max_ts = max(m.timestamp for m in models)
+            
+            existing_query = (
+                self.supabase.client.table("trend_data")
+                .select("timestamp")
+                .eq("item_statistics_id", item_statistics_id)
+                .eq("period", period.value)
+                .gte("timestamp", min_ts.isoformat())
+                .lte("timestamp", max_ts.isoformat())
+                .execute()
+            )
+            
+            existing_timestamps = set()
+            if existing_query.data:
+                for row in existing_query.data:
+                     ts_str = row.get("timestamp")
+                     if ts_str:
+                         try:
+                             if ts_str.endswith("Z"):
+                                 ts_str = ts_str[:-1] + "+00:00"
+                             dt = datetime.fromisoformat(ts_str)
+                             existing_timestamps.add(dt)
+                         except ValueError:
+                             pass
+            
+            new_models = []
+            for m in models:
+                found = False
+                for existing_ts in existing_timestamps:
+                    if abs((m.timestamp - existing_ts).total_seconds()) < 1.0:
+                        found = True
+                        break
+                
+                if not found:
+                    new_models.append(m)
+            
+            if len(models) - len(new_models) > 0:
+                self.logger.info(f"预先过滤掉 {len(models) - len(new_models)} 条已存在的走势记录")
+            
+            models = new_models
+            
+            if not models:
+                self.logger.info("所有数据均已存在，无需插入")
+                return 0
+                
+        except Exception as e:
+            self.logger.warning(f"预查询现有记录失败，回退到直接插入尝试: {e}")
 
         rows = [m.to_dict() for m in models]
         self.logger.info(
@@ -388,54 +439,26 @@ class ItemTrendCrawler:
                 result = self.supabase.insert_batch("trend_data", batch)
                 inserted_count = len(result) if result else 0
                 total_inserted += inserted_count
-                skipped_count += len(batch) - inserted_count
                 self.logger.debug(
                     f"批量插入 {inserted_count} 条数据 "
                     f"(进度: {min(i + batch_size, len(rows))}/{len(rows)})"
                 )
             except Exception as e:
-                error_msg = str(e).lower()
-                # 唯一约束冲突：item_statistics_id + period + timestamp
-                if "unique" in error_msg or "duplicate" in error_msg or "23505" in error_msg:
-                    self.logger.warning("批量插入遇到唯一约束冲突，改为逐条插入（只保存不存在的记录）...")
-                    for item in batch:
-                        try:
-                            self.supabase.insert_data("trend_data", item)
-                            total_inserted += 1
-                        except Exception as single_e:
-                            single_error = str(single_e).lower()
-                            if (
-                                "unique" in single_error
-                                or "duplicate" in single_error
-                                or "23505" in single_error
-                            ):
-                                skipped_count += 1
-                                continue
-                            else:
-                                self.logger.error(f"插入单条数据失败: {single_e}")
-                                skipped_count += 1
-                else:
-                    self.logger.warning(f"批量插入失败: {e}，改为逐条插入...")
-                    for item in batch:
-                        try:
-                            self.supabase.insert_data("trend_data", item)
-                            total_inserted += 1
-                        except Exception as single_e:
-                            single_error = str(single_e).lower()
-                            if (
-                                "unique" in single_error
-                                or "duplicate" in single_error
-                                or "23505" in single_error
-                            ):
-                                skipped_count += 1
-                                continue
-                            else:
-                                self.logger.error(f"插入单条数据失败: {single_e}")
-                                skipped_count += 1
+                # 回退策略
+                self.logger.warning(f"批量插入失败: {e}，改为逐条插入...")
+                for item in batch:
+                    try:
+                        self.supabase.insert_data("trend_data", item)
+                        total_inserted += 1
+                    except Exception as single_e:
+                        if "unique" in str(single_e).lower() or "duplicate" in str(single_e).lower():
+                             skipped_count += 1
+                        else:
+                             self.logger.error(f"插入单条数据失败: {single_e}")
+                             skipped_count += 1
 
         self.logger.info(
-            f"成功保存 {total_inserted} 条走势数据到 trend_data 表，"
-            f"跳过 {skipped_count} 条已存在的记录"
+            f"成功保存 {total_inserted} 条走势数据到 trend_data 表"
         )
         return total_inserted
 

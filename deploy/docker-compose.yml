@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # 统一服务 (API + Worker环境)
@@ -30,6 +30,8 @@ services:
     volumes:
       # 挂载日志目录到宿主机
       - ./logs:/app/logs
+      # 挂载源码(快速部署模式): 将宿主机项目根目录(crawler)挂载到容器内的代码目录
+      - ./app:/app/crawler
     networks:
       - crawler-network
     logging:
